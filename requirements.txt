@@ -1,0 +1,6 @@
+faster-whisper==1.2.1
+obsws-python==1.8.0
+PyAudioWPatch==0.2.12.8
+RapidFuzz==3.14.5
+python-dotenv==1.2.3
+sv_ttk==2.6.1
