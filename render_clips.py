@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 
 import config as app_config
@@ -586,6 +587,19 @@ def main():
         "SHORT RENDERER"
     )
     print("=" * 70)
+
+    if shutil.which("ffmpeg") is None:
+
+        print()
+        print(
+            "ERROR: ffmpeg was not found on PATH."
+        )
+        print(
+            "Install it from https://ffmpeg.org/download.html "
+            "and make sure ffmpeg.exe is on your PATH, then try again."
+        )
+
+        return
 
     jobs = get_verified_jobs()
 

@@ -14,16 +14,34 @@ committed to git by accident.
 
 import json
 import os
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _app_data_dir():
+    """Per-user, always-writable settings folder - not next to the exe.
+
+    An app installed to Program Files can't write there without admin
+    rights, so highlight_config.json/.env live under %APPDATA% instead.
+    Falls back to the repo folder itself only if APPDATA is unset
+    (never true on real Windows, but keeps this importable elsewhere)."""
+    appdata = os.getenv("APPDATA")
+    base = Path(appdata) / "OBS AI Highlights" if appdata else REPO_ROOT
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+BASE = _app_data_dir()
+CONFIG_FILE = BASE / "highlight_config.json"
+ENV_FILE = BASE / ".env"
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(ENV_FILE)
 except Exception:
     pass
-
-BASE = Path(__file__).resolve().parent
-CONFIG_FILE = BASE / "highlight_config.json"
 
 DEFAULTS = {
     "preset": "church",
@@ -84,6 +102,38 @@ def get_obs_password():
     """OBS password lives in the environment / .env, never in the JSON
     config file, so it's never accidentally committed or shared."""
     return os.getenv("OBS_PASSWORD", "")
+
+
+def set_obs_password(password):
+    """Writes OBS_PASSWORD into the shared .env file, so the Settings UI
+    can offer a normal password field instead of requiring anyone to
+    hand-edit a text file. Preserves any other lines already in .env."""
+    lines = []
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text(encoding="utf-8-sig").splitlines():
+            if not line.strip().startswith("OBS_PASSWORD="):
+                lines.append(line)
+
+    lines.append(f"OBS_PASSWORD={password}")
+
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    os.environ["OBS_PASSWORD"] = password
+
+
+def worker_launch_command(role):
+    """[executable, *args] to relaunch this tool as a given worker role
+    ("capture" | "verify" | "render") - whether running from source or
+    as a frozen PyInstaller build.
+
+    Frozen mode re-invokes the single packaged exe with --worker instead
+    of assuming sys.executable can run a sibling .py file - it can't
+    once frozen, since sys.executable IS the packaged exe by then."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--worker", role]
+
+    return [sys.executable, str(REPO_ROOT / "app.py"), "--worker", role]
 
 
 def get_output_folder(config):

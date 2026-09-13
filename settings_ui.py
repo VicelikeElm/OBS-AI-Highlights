@@ -30,17 +30,15 @@ PHRASE_LIST_FIELDS = (
 
 
 class SettingsUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("OBS AI Highlights — Settings")
-        self.root.geometry("760x680")
-        self.root.minsize(700, 600)
+    def __init__(self, parent):
+        self.parent = parent
 
         self.config = app_config.load_config()
 
         self.preset_var = tk.StringVar()
         self.obs_host_var = tk.StringVar()
         self.obs_port_var = tk.StringVar()
+        self.obs_password_var = tk.StringVar()
         self.recording_folder_var = tk.StringVar()
         self.output_folder_var = tk.StringVar()
         self.full_transcript_srt_folder_var = tk.StringVar()
@@ -73,7 +71,7 @@ class SettingsUI:
     # -----------------------------------------------------------
 
     def _build_ui(self):
-        outer = ttk.Frame(self.root, padding=16)
+        outer = ttk.Frame(self.parent, padding=16)
         outer.pack(fill="both", expand=True)
 
         notebook = ttk.Notebook(outer)
@@ -145,11 +143,16 @@ class SettingsUI:
         self._add_labeled_entry(parent, "OBS host", self.obs_host_var)
         self._add_labeled_entry(parent, "OBS port", self.obs_port_var)
 
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=4)
+        ttk.Label(row, text="OBS password", width=32, anchor="w").pack(side="left")
+        ttk.Entry(row, textvariable=self.obs_password_var, show="*").pack(side="left", fill="x", expand=True)
+
         ttk.Label(
             parent,
             text=(
-                "OBS password is never stored here - set OBS_PASSWORD in a "
-                ".env file next to these scripts."
+                "Leave blank to keep the current password. It's stored in a "
+                "local .env file, never in highlight_config.json."
             ),
             wraplength=680,
             foreground="#888888",
@@ -309,6 +312,11 @@ class SettingsUI:
         if selected_key == "custom":
             config["custom_preset"] = self._collect_custom_preset()
 
+        new_password = self.obs_password_var.get()
+        if new_password:
+            app_config.set_obs_password(new_password)
+            self.obs_password_var.set("")
+
         app_config.save_config(config)
         self.config = config
         messagebox.showinfo("Saved", "Settings saved.")
@@ -316,6 +324,9 @@ class SettingsUI:
 
 def main():
     root = tk.Tk()
+    root.title("OBS AI Highlights — Settings")
+    root.geometry("760x680")
+    root.minsize(700, 600)
 
     if sv_ttk is not None:
         try:

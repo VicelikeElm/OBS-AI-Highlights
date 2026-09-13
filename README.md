@@ -30,39 +30,42 @@ Built-in presets change what counts as a good clip:
 3. `render_clips.py` takes verified clips and renders them into a 1080x1920
    vertical video with burned-in captions, ready to post.
 
-Each stage is a separate script — run them side by side, or wire them
-into your own pipeline.
+Each stage can run on its own, or all three from one app - see below.
 
-## Setup
+## Easy install (Windows)
+
+Run the installer (`OBSAIHighlights-Setup-vX.Y.Z.exe`) and launch **OBS AI
+Highlights** from the Start Menu. One window, two tabs:
+
+- **Settings** — pick a preset, set your OBS connection details and
+  password, and point it at your recording/output folders.
+- **Run** — buttons to start/stop live highlight capture, and to manually
+  re-run verification or rendering, with a live log of what's happening.
+
+Prerequisites the installer doesn't bundle:
+- An NVIDIA GPU + driver for the default (CUDA) Whisper settings - switch
+  `whisper_device`/`verify_device` to `cpu` in Settings if you don't have
+  one.
+- [ffmpeg](https://ffmpeg.org/download.html) on your PATH (used for the
+  final vertical-video render step). The app will tell you clearly if it's
+  missing rather than failing silently.
+
+Settings live in `%APPDATA%\OBS AI Highlights\` (`highlight_config.json` +
+`.env` for the OBS password) - separate from wherever the app itself is
+installed, so it works without admin rights and survives a reinstall.
+
+## Running from source
 
 ```bash
 python -m venv venv
 venv\Scripts\activate          # Windows
 pip install -r requirements.txt
+
+python app.py                  # the unified app, same as the installed one
 ```
 
-Requires a CUDA-capable GPU for the default Whisper settings (`device:
-cuda`); switch `whisper_device`/`verify_device` to `cpu` in settings if you
-don't have one.
-
-Create a `.env` file next to these scripts with your OBS WebSocket
-password (never stored in the JSON config, so it's never committed by
-accident):
-
-```
-OBS_PASSWORD=your-obs-websocket-password
-```
-
-Run the settings app to pick a preset and configure folders, OBS
-connection, and model settings:
-
-```bash
-python settings_ui.py
-```
-
-Settings are saved to `highlight_config.json` (git-ignored).
-
-## Running
+Or run any stage on its own, same as the installed app's Run tab does
+internally:
 
 ```bash
 python highlight_engine.py   # live capture + scoring, while OBS is streaming/recording
@@ -70,8 +73,22 @@ python verify_clips.py       # re-verify clips saved so far
 python render_clips.py       # render verified clips into finished vertical shorts
 ```
 
+## Building the Windows installer
+
+Requires [Inno Setup 6](https://jrsoftware.org/isdl.php) and PyInstaller
+(`pip install pyinstaller`, or install it into an isolated folder so it
+doesn't pollute a shared venv):
+
+```bash
+python build_app_windows.py
+```
+
+Produces `dist/OBSAIHighlights/` (the packaged app) and
+`installer-output/OBSAIHighlights-Setup-vX.Y.Z.exe`.
+
 ## Status
 
-Private, early-stage companion tool — extracted from a church production
+Private, early-stage companion tool - extracted from a church production
 system's internal AI-shorts feature and generalized with a preset system.
-Not yet packaged as a standalone installer; runs from source.
+Packaged as an unsigned Windows installer (no code-signing certificate
+yet, so Windows SmartScreen may warn on first run).

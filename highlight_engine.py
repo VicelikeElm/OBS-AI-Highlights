@@ -1,5 +1,4 @@
 import os
-import sys
 import gc
 import re
 import time
@@ -79,17 +78,6 @@ OBS_REPLAY_FOLDER = CONFIG.get(
     "recording_folder",
     app_config.DEFAULTS["recording_folder"],
 )
-
-PROCESS_SHORTS_SCRIPT = os.path.join(
-    BASE_FOLDER,
-    "verify_clips.py"
-)
-
-RENDER_SHORTS_SCRIPT = os.path.join(
-    BASE_FOLDER,
-    "render_clips.py"
-)
-
 
 # =========================================================
 # AUDIO
@@ -2066,33 +2054,26 @@ def obs_became_active():
 
 
 def run_post_service_program(
-    script_path,
+    role,
     description
 ):
-
-    if not os.path.exists(
-        script_path
-    ):
-
-        log(
-            f"ERROR: {os.path.basename(script_path)} "
-            f"was not found."
-        )
-
-        return False
 
     log()
     log("=" * 70)
     log(description)
     log("=" * 70)
 
+    command = app_config.worker_launch_command(
+        role
+    )
+
     process = subprocess.Popen(
-        [
-            sys.executable,
-            "-u",
-            script_path,
-        ],
+        command,
         cwd=BASE_FOLDER,
+        env={
+            **os.environ,
+            "PYTHONUNBUFFERED": "1",
+        },
     )
 
     while True:
@@ -2173,7 +2154,7 @@ def run_quality_processor():
     # =====================================================
 
     verified = run_post_service_program(
-        PROCESS_SHORTS_SCRIPT,
+        "verify",
         "MEDIUM WHISPER VERIFICATION"
     )
 
@@ -2202,7 +2183,7 @@ def run_quality_processor():
     # =====================================================
 
     rendered = run_post_service_program(
-        RENDER_SHORTS_SCRIPT,
+        "render",
         "VERTICAL SHORT RENDERING"
     )
 
