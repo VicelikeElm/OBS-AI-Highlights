@@ -17,13 +17,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from version import APP_VERSION
+
 SOURCE_ROOT = Path(__file__).resolve().parent
 
 DIST_ROOT = SOURCE_ROOT / "dist"
 BUILD_ROOT = SOURCE_ROOT / "build"
 
 APP_NAME = "OBSAIHighlights"
-VERSION = "0.1.0"
+VERSION = APP_VERSION
 
 
 def _run(command):
@@ -73,6 +75,14 @@ def _pyinstaller_command():
     for heavy_package in ("faster_whisper", "ctranslate2"):
         if importlib.util.find_spec(heavy_package) is not None:
             command.extend(["--collect-all", heavy_package])
+
+    icon = SOURCE_ROOT / "icon.ico"
+    if icon.exists():
+        command.extend(["--icon", str(icon)])
+
+    assets_dir = SOURCE_ROOT / "assets"
+    if assets_dir.exists():
+        command.extend(["--add-data", f"{assets_dir};assets"])
 
     command.append(str(SOURCE_ROOT / "app.py"))
 

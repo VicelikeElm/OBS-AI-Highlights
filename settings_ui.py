@@ -9,7 +9,9 @@ codebase at all. Run directly:
     python settings_ui.py
 """
 
+import sys
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 try:
@@ -19,6 +21,20 @@ except Exception:
 
 import config as app_config
 import presets
+
+
+def _asset_path(*parts):
+    """Resolves a bundled asset both from source and as a frozen build.
+
+    sys._MEIPASS is set by PyInstaller's bootloader (onedir and onefile
+    alike) to wherever --add-data actually placed bundled files - not
+    the same place config.REPO_ROOT points to once frozen."""
+    if getattr(sys, "frozen", False):
+        base = Path(sys._MEIPASS)
+    else:
+        base = Path(__file__).resolve().parent
+
+    return base.joinpath(*parts)
 
 PHRASE_LIST_FIELDS = (
     ("strong_phrases", "Strong phrases (one per line)"),
@@ -80,14 +96,17 @@ class SettingsUI:
         preset_tab = ttk.Frame(notebook, padding=12)
         connection_tab = ttk.Frame(notebook, padding=12)
         model_tab = ttk.Frame(notebook, padding=12)
+        about_tab = ttk.Frame(notebook, padding=12)
 
         notebook.add(preset_tab, text="Preset & Phrases")
         notebook.add(connection_tab, text="OBS & Folders")
         notebook.add(model_tab, text="Whisper & Thresholds")
+        notebook.add(about_tab, text="About")
 
         self._build_preset_tab(preset_tab)
         self._build_connection_tab(connection_tab)
         self._build_model_tab(model_tab)
+        self._build_about_tab(about_tab)
 
         button_row = ttk.Frame(outer, padding=(0, 12, 0, 0))
         button_row.pack(fill="x")
@@ -186,6 +205,30 @@ class SettingsUI:
         self._add_labeled_entry(parent, "Save-clip threshold", self.save_threshold_var)
         self._add_labeled_entry(parent, "Verified similarity", self.verified_similarity_var)
         self._add_labeled_entry(parent, "Verified confidence", self.verified_confidence_var)
+
+    def _build_about_tab(self, parent):
+        content = ttk.Frame(parent)
+        content.place(relx=0.5, rely=0.5, anchor="center")
+
+        logo_path = _asset_path("assets", "vivce_media_solutions_ui.png")
+
+        try:
+            self._about_logo_image = tk.PhotoImage(file=str(logo_path))
+            ttk.Label(content, image=self._about_logo_image).pack(pady=(0, 12))
+        except Exception:
+            pass
+
+        ttk.Label(
+            content,
+            text="Vice Media Solutions",
+            font=("TkDefaultFont", 13, "bold"),
+        ).pack()
+
+        ttk.Label(
+            content,
+            text="OBS AI Highlights",
+            foreground="#888888",
+        ).pack()
 
     def _add_labeled_entry(self, parent, label, var):
         row = ttk.Frame(parent)

@@ -1,5 +1,7 @@
 # OBS AI Highlights
 
+Built by [Vice Media Solutions](assets/vivce_media_solutions.png).
+
 Watches OBS's replay buffer during a live stream, uses a live Whisper
 transcript to score which moments are "highlight-worthy," saves those as
 clips, then re-verifies and renders them into finished vertical shorts —

@@ -17,9 +17,12 @@ itself once frozen (see config.worker_launch_command()).
 
 import os
 import sys
+import json
 import queue
 import threading
 import subprocess
+import urllib.request
+import webbrowser
 import tkinter as tk
 from tkinter import ttk
 
@@ -35,12 +38,42 @@ except Exception:
 
 import config as app_config
 from settings_ui import SettingsUI
+from version import APP_VERSION, GITHUB_REPO
 
 WORKER_LABELS = {
     "capture": "Highlight Capture",
     "verify": "Verify Clips",
     "render": "Render Clips",
 }
+
+
+def _parse_version(text):
+    """"v1.2.3" / "1.2.3" -> (1, 2, 3), tolerant of stray characters so a
+    malformed tag never crashes the comparison, just sorts low."""
+    text = text.strip().lstrip("vV")
+    parts = []
+
+    for piece in text.split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+
+    return tuple(parts)
+
+
+def _fetch_latest_release():
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "OBS-AI-Highlights",
+        },
+    )
+
+    with urllib.request.urlopen(request, timeout=10) as response:
+        data = json.loads(response.read().decode("utf-8"))
+
+    return data.get("tag_name", ""), data.get("html_url", "")
 
 
 def run_worker(role):
@@ -60,25 +93,30 @@ def run_worker(role):
 class MainApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("OBS AI Highlights")
+        self.root.title(f"OBS AI Highlights v{APP_VERSION}")
         self.root.geometry("880x700")
         self.root.minsize(780, 600)
 
         self.active_process = None
         self.active_role = None
         self.log_queue = queue.Queue()
+        self.update_queue = queue.Queue()
+        self._latest_release_url = None
 
         notebook = ttk.Notebook(root)
         notebook.pack(fill="both", expand=True, padx=12, pady=12)
 
         run_tab = ttk.Frame(notebook, padding=12)
         settings_tab = ttk.Frame(notebook, padding=12)
+        updates_tab = ttk.Frame(notebook, padding=12)
 
         notebook.add(run_tab, text="Run")
         notebook.add(settings_tab, text="Settings")
+        notebook.add(updates_tab, text="Updates")
 
         self._build_run_tab(run_tab)
         self.settings_ui = SettingsUI(settings_tab)
+        self._build_updates_tab(updates_tab)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_log_queue()
@@ -137,6 +175,86 @@ class MainApp:
         self.log_text.configure(yscrollcommand=scrollbar.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+
+    def _build_updates_tab(self, parent):
+        ttk.Label(
+            parent,
+            text=f"Current version: v{APP_VERSION}",
+            font=("TkDefaultFont", 11, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+
+        self.update_status_label = ttk.Label(parent, text="")
+        self.update_status_label.pack(anchor="w", pady=(0, 10))
+
+        button_row = ttk.Frame(parent)
+        button_row.pack(anchor="w")
+
+        self.check_updates_button = ttk.Button(
+            button_row,
+            text="Check for Updates",
+            command=self._check_for_updates,
+        )
+        self.check_updates_button.pack(side="left")
+
+        self.view_release_button = ttk.Button(
+            button_row,
+            text="View Release",
+            command=self._open_latest_release,
+            state="disabled",
+        )
+        self.view_release_button.pack(side="left", padx=(8, 0))
+
+    # -----------------------------------------------------------
+    # Update checking
+    # -----------------------------------------------------------
+
+    def _check_for_updates(self):
+        self.check_updates_button.configure(state="disabled")
+        self.view_release_button.configure(state="disabled")
+        self.update_status_label.configure(text="Checking...")
+        self._latest_release_url = None
+
+        threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
+        self.root.after(100, self._poll_update_queue)
+
+    def _check_for_updates_worker(self):
+        # Push the result onto a thread-safe queue instead of calling
+        # self.root.after() from this background thread directly - Tk
+        # requires after() to be scheduled from the thread already
+        # running the event loop, same reasoning as the log-queue
+        # pattern used for worker subprocess output below.
+        try:
+            tag_name, html_url = _fetch_latest_release()
+            self.update_queue.put((tag_name, html_url, None))
+        except Exception as exc:
+            self.update_queue.put((None, None, exc))
+
+    def _poll_update_queue(self):
+        try:
+            tag_name, html_url, error = self.update_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(100, self._poll_update_queue)
+            return
+
+        self._on_update_check_done(tag_name, html_url, error)
+
+    def _on_update_check_done(self, tag_name, html_url, error):
+        self.check_updates_button.configure(state="normal")
+
+        if error is not None:
+            self.update_status_label.configure(text=f"Couldn't check for updates: {error}")
+            return
+
+        if _parse_version(tag_name) > _parse_version(APP_VERSION):
+            self.update_status_label.configure(text=f"Update available: {tag_name}")
+            self._latest_release_url = html_url
+            self.view_release_button.configure(state="normal")
+        else:
+            self.update_status_label.configure(text="You're up to date.")
+
+    def _open_latest_release(self):
+        if self._latest_release_url:
+            webbrowser.open(self._latest_release_url)
 
     # -----------------------------------------------------------
     # Worker process management
