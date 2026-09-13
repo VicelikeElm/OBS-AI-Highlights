@@ -228,6 +228,12 @@ class SettingsUI:
         self._add_audio_device_row(parent)
         self._add_labeled_entry(parent, "Audio device fallback index", self.audio_device_fallback_var)
 
+        ttk.Button(
+            parent,
+            text="Save",
+            command=self._save,
+        ).pack(anchor="e", pady=(16, 0))
+
     def _build_model_tab(self, parent):
         self._add_labeled_combo(parent, "Whisper model (live capture)", self.whisper_model_var, WHISPER_MODEL_OPTIONS)
         self._add_labeled_combo(parent, "Whisper device", self.whisper_device_var, DEVICE_OPTIONS)
