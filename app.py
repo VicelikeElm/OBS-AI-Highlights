@@ -19,11 +19,13 @@ import os
 import sys
 import json
 import queue
+import tempfile
 import threading
 import subprocess
 import urllib.request
 import webbrowser
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 
 try:
@@ -73,7 +75,45 @@ def _fetch_latest_release():
     with urllib.request.urlopen(request, timeout=10) as response:
         data = json.loads(response.read().decode("utf-8"))
 
-    return data.get("tag_name", ""), data.get("html_url", "")
+    tag_name = data.get("tag_name", "")
+    html_url = data.get("html_url", "")
+
+    asset_url = None
+    asset_size = None
+
+    for asset in data.get("assets", []):
+        name = asset.get("name", "")
+        if name.startswith("OBSAIHighlights-Setup-") and name.endswith(".exe"):
+            asset_url = asset.get("browser_download_url")
+            asset_size = asset.get("size")
+            break
+
+    return tag_name, html_url, asset_url, asset_size
+
+
+def _download_installer(asset_url, expected_size, progress_callback):
+    request = urllib.request.Request(
+        asset_url,
+        headers={"User-Agent": "OBS-AI-Highlights"},
+    )
+
+    dest_path = Path(tempfile.gettempdir()) / Path(asset_url).name
+
+    with urllib.request.urlopen(request, timeout=30) as response:
+        downloaded = 0
+        with open(dest_path, "wb") as f:
+            while True:
+                chunk = response.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                progress_callback(downloaded, expected_size)
+
+    if expected_size and dest_path.stat().st_size != expected_size:
+        raise RuntimeError("Downloaded file size doesn't match - it may be corrupted.")
+
+    return dest_path
 
 
 def run_worker(role):
@@ -101,7 +141,10 @@ class MainApp:
         self.active_role = None
         self.log_queue = queue.Queue()
         self.update_queue = queue.Queue()
+        self.download_queue = queue.Queue()
         self._latest_release_url = None
+        self._latest_asset_url = None
+        self._latest_asset_size = None
 
         notebook = ttk.Notebook(root)
         notebook.pack(fill="both", expand=True, padx=12, pady=12)
@@ -196,13 +239,24 @@ class MainApp:
         )
         self.check_updates_button.pack(side="left")
 
+        self.update_now_button = ttk.Button(
+            button_row,
+            text="Update Now",
+            command=self._start_update,
+            state="disabled",
+        )
+        self.update_now_button.pack(side="left", padx=(8, 0))
+
         self.view_release_button = ttk.Button(
             button_row,
-            text="View Release",
+            text="View Release Notes",
             command=self._open_latest_release,
             state="disabled",
         )
         self.view_release_button.pack(side="left", padx=(8, 0))
+
+        self.download_progress_label = ttk.Label(parent, text="")
+        self.download_progress_label.pack(anchor="w", pady=(10, 0))
 
     # -----------------------------------------------------------
     # Update checking
@@ -210,9 +264,13 @@ class MainApp:
 
     def _check_for_updates(self):
         self.check_updates_button.configure(state="disabled")
+        self.update_now_button.configure(state="disabled")
         self.view_release_button.configure(state="disabled")
         self.update_status_label.configure(text="Checking...")
+        self.download_progress_label.configure(text="")
         self._latest_release_url = None
+        self._latest_asset_url = None
+        self._latest_asset_size = None
 
         threading.Thread(target=self._check_for_updates_worker, daemon=True).start()
         self.root.after(100, self._poll_update_queue)
@@ -224,21 +282,21 @@ class MainApp:
         # running the event loop, same reasoning as the log-queue
         # pattern used for worker subprocess output below.
         try:
-            tag_name, html_url = _fetch_latest_release()
-            self.update_queue.put((tag_name, html_url, None))
+            tag_name, html_url, asset_url, asset_size = _fetch_latest_release()
+            self.update_queue.put((tag_name, html_url, asset_url, asset_size, None))
         except Exception as exc:
-            self.update_queue.put((None, None, exc))
+            self.update_queue.put((None, None, None, None, exc))
 
     def _poll_update_queue(self):
         try:
-            tag_name, html_url, error = self.update_queue.get_nowait()
+            tag_name, html_url, asset_url, asset_size, error = self.update_queue.get_nowait()
         except queue.Empty:
             self.root.after(100, self._poll_update_queue)
             return
 
-        self._on_update_check_done(tag_name, html_url, error)
+        self._on_update_check_done(tag_name, html_url, asset_url, asset_size, error)
 
-    def _on_update_check_done(self, tag_name, html_url, error):
+    def _on_update_check_done(self, tag_name, html_url, asset_url, asset_size, error):
         self.check_updates_button.configure(state="normal")
 
         if error is not None:
@@ -248,13 +306,102 @@ class MainApp:
         if _parse_version(tag_name) > _parse_version(APP_VERSION):
             self.update_status_label.configure(text=f"Update available: {tag_name}")
             self._latest_release_url = html_url
+            self._latest_asset_url = asset_url
+            self._latest_asset_size = asset_size
             self.view_release_button.configure(state="normal")
+
+            if asset_url:
+                self.update_now_button.configure(state="normal")
+            else:
+                self.download_progress_label.configure(
+                    text="No installer asset found on that release - use View Release Notes instead."
+                )
         else:
             self.update_status_label.configure(text="You're up to date.")
 
     def _open_latest_release(self):
         if self._latest_release_url:
             webbrowser.open(self._latest_release_url)
+
+    # -----------------------------------------------------------
+    # Update download + install
+    # -----------------------------------------------------------
+
+    def _start_update(self):
+        if not self._latest_asset_url:
+            return
+
+        if self.active_process is not None:
+            self.download_progress_label.configure(
+                text="Stop the current operation on the Run tab before updating."
+            )
+            return
+
+        self.check_updates_button.configure(state="disabled")
+        self.update_now_button.configure(state="disabled")
+        self.download_progress_label.configure(text="Downloading update...")
+
+        threading.Thread(target=self._download_update_worker, daemon=True).start()
+        self.root.after(100, self._poll_download_queue)
+
+    def _download_update_worker(self):
+        try:
+            def report_progress(downloaded, total):
+                self.download_queue.put(("progress", downloaded, total))
+
+            installer_path = _download_installer(
+                self._latest_asset_url,
+                self._latest_asset_size,
+                report_progress,
+            )
+            self.download_queue.put(("done", installer_path, None))
+        except Exception as exc:
+            self.download_queue.put(("error", None, exc))
+
+    def _poll_download_queue(self):
+        try:
+            kind, payload, extra = self.download_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(100, self._poll_download_queue)
+            return
+
+        if kind == "progress":
+            downloaded, total = payload, extra
+            downloaded_mb = downloaded / (1024 * 1024)
+            if total:
+                percent = int(downloaded * 100 / total)
+                total_mb = total / (1024 * 1024)
+                text = f"Downloading update... {percent}% ({downloaded_mb:.1f} MB / {total_mb:.1f} MB)"
+            else:
+                text = f"Downloading update... {downloaded_mb:.1f} MB"
+            self.download_progress_label.configure(text=text)
+            self.root.after(100, self._poll_download_queue)
+            return
+
+        if kind == "done":
+            installer_path = payload
+            self.download_progress_label.configure(text="Download complete. Launching installer...")
+            self._launch_installer_and_exit(installer_path)
+            return
+
+        error = extra
+        self.download_progress_label.configure(text=f"Update failed: {error}")
+        self.check_updates_button.configure(state="normal")
+        self.update_now_button.configure(state="normal")
+
+    def _launch_installer_and_exit(self, installer_path):
+        try:
+            subprocess.Popen([str(installer_path)])
+        except Exception as exc:
+            self.download_progress_label.configure(text=f"Couldn't launch installer: {exc}")
+            self.check_updates_button.configure(state="normal")
+            self.update_now_button.configure(state="normal")
+            return
+
+        # The installer's own CloseApplications=yes will also handle this
+        # if this races, but closing proactively gives it a clean run at
+        # replacing our files instead of fighting a still-open exe.
+        self.root.after(500, self.root.destroy)
 
     # -----------------------------------------------------------
     # Worker process management

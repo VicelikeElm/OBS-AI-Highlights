@@ -20,6 +20,62 @@ except Exception:
 import config as app_config
 import presets
 
+
+def _enumerate_loopback_devices():
+    """Real WASAPI loopback-capable device names on this machine (what
+    highlight_engine.py actually needs - capturing what's playing OUT of
+    a speaker/headphone device, not a microphone). Returns [] on any
+    failure (no audio hardware, PortAudio not available, etc.) so the
+    Settings UI can still fall back to manual entry rather than crash."""
+    try:
+        import pyaudiowpatch as pyaudio
+    except Exception:
+        return []
+
+    try:
+        audio = pyaudio.PyAudio()
+    except Exception:
+        return []
+
+    try:
+        names = []
+        for info in audio.get_loopback_device_info_generator():
+            name = str(info.get("name", "")).strip()
+            if name:
+                names.append(name)
+        return names
+    except Exception:
+        return []
+    finally:
+        audio.terminate()
+
+
+WHISPER_MODEL_OPTIONS = (
+    "tiny",
+    "tiny.en",
+    "base",
+    "base.en",
+    "small",
+    "small.en",
+    "medium",
+    "medium.en",
+    "large-v2",
+    "large-v3",
+    "large-v3-turbo",
+)
+
+DEVICE_OPTIONS = ("cuda", "cpu", "auto")
+
+COMPUTE_TYPE_OPTIONS = (
+    "float32",
+    "float16",
+    "bfloat16",
+    "int8",
+    "int8_float16",
+    "int8_float32",
+    "int8_bfloat16",
+)
+
 PHRASE_LIST_FIELDS = (
     ("strong_phrases", "Strong phrases (one per line)"),
     ("application_phrases", "Application / call-to-action phrases"),
@@ -169,26 +225,65 @@ class SettingsUI:
             self.full_transcript_srt_folder_var,
         )
 
-        self._add_labeled_entry(parent, "Audio device name", self.audio_device_name_var)
+        self._add_audio_device_row(parent)
         self._add_labeled_entry(parent, "Audio device fallback index", self.audio_device_fallback_var)
 
     def _build_model_tab(self, parent):
-        self._add_labeled_entry(parent, "Whisper model (live capture)", self.whisper_model_var)
-        self._add_labeled_entry(parent, "Whisper device", self.whisper_device_var)
-        self._add_labeled_entry(parent, "Whisper compute type", self.whisper_compute_type_var)
+        self._add_labeled_combo(parent, "Whisper model (live capture)", self.whisper_model_var, WHISPER_MODEL_OPTIONS)
+        self._add_labeled_combo(parent, "Whisper device", self.whisper_device_var, DEVICE_OPTIONS)
+        self._add_labeled_combo(parent, "Whisper compute type", self.whisper_compute_type_var, COMPUTE_TYPE_OPTIONS)
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
 
-        self._add_labeled_entry(parent, "Verify model (second pass)", self.verify_model_var)
-        self._add_labeled_entry(parent, "Verify device", self.verify_device_var)
-        self._add_labeled_entry(parent, "Verify compute type", self.verify_compute_type_var)
+        self._add_labeled_combo(parent, "Verify model (second pass)", self.verify_model_var, WHISPER_MODEL_OPTIONS)
+        self._add_labeled_combo(parent, "Verify device", self.verify_device_var, DEVICE_OPTIONS)
+        self._add_labeled_combo(parent, "Verify compute type", self.verify_compute_type_var, COMPUTE_TYPE_OPTIONS)
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
 
-        self._add_labeled_entry(parent, "Possible-clip threshold", self.possible_threshold_var)
-        self._add_labeled_entry(parent, "Save-clip threshold", self.save_threshold_var)
-        self._add_labeled_entry(parent, "Verified similarity", self.verified_similarity_var)
-        self._add_labeled_entry(parent, "Verified confidence", self.verified_confidence_var)
+        self._add_labeled_spinbox(parent, "Possible-clip threshold (0-100)", self.possible_threshold_var, 0, 100, 1)
+        self._add_labeled_spinbox(parent, "Save-clip threshold (0-100)", self.save_threshold_var, 0, 100, 1)
+        self._add_labeled_spinbox(parent, "Verified similarity (0-100)", self.verified_similarity_var, 0, 100, 1)
+        self._add_labeled_spinbox(
+            parent,
+            "Verified confidence (0.0-1.0)",
+            self.verified_confidence_var,
+            0.0,
+            1.0,
+            0.05,
+            fmt="%.2f",
+        )
+
+        ttk.Frame(parent).pack(fill="both", expand=True)
+
+        ttk.Button(
+            parent,
+            text="What do these settings mean?",
+            command=self._show_model_info,
+        ).pack(anchor="w", pady=(10, 0))
+
+    def _show_model_info(self):
+        messagebox.showinfo(
+            "Whisper & Thresholds",
+            "Whisper model - bigger models (medium/large) are more "
+            "accurate but slower and use more GPU memory. The live "
+            "capture model should stay small/fast since it runs "
+            "continuously; the verify model can be bigger since it "
+            "only re-checks clips after they're already saved.\n\n"
+            "Device - \"cuda\" uses your NVIDIA GPU (fast, needs a "
+            "compatible GPU and drivers). \"cpu\" works everywhere but "
+            "is much slower. \"auto\" lets the library decide.\n\n"
+            "Compute type - trades accuracy for speed/memory. float32 "
+            "is most accurate and slowest; float16/int8_float16 are "
+            "good GPU defaults; int8 is the usual CPU choice.\n\n"
+            "Possible/Save-clip threshold - how selective the live "
+            "scorer is (0-100). Lower catches more moments, including "
+            "weaker ones; higher only saves the strongest.\n\n"
+            "Verified similarity/confidence - how closely a clip's "
+            "second, more accurate transcription has to match the "
+            "original before it's marked Verified instead of sent to "
+            "Review.",
+        )
 
     def _build_about_tab(self, parent):
         content = ttk.Frame(parent)
@@ -213,6 +308,58 @@ class SettingsUI:
             text="OBS AI Highlights",
             foreground="#888888",
         ).pack()
+
+    def _add_labeled_combo(self, parent, label, var, values):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=4)
+        ttk.Label(row, text=label, width=32, anchor="w").pack(side="left")
+        ttk.Combobox(row, textvariable=var, values=values).pack(side="left", fill="x", expand=True)
+
+    def _add_labeled_spinbox(self, parent, label, var, from_, to, increment, fmt=None):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=4)
+        ttk.Label(row, text=label, width=32, anchor="w").pack(side="left")
+
+        kwargs = {}
+        if fmt:
+            kwargs["format"] = fmt
+
+        ttk.Spinbox(
+            row,
+            from_=from_,
+            to=to,
+            increment=increment,
+            textvariable=var,
+            **kwargs,
+        ).pack(side="left", fill="x", expand=True)
+
+    def _add_audio_device_row(self, parent):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=4)
+        ttk.Label(row, text="Audio device (loopback)", width=32, anchor="w").pack(side="left")
+
+        self.audio_device_combo = ttk.Combobox(row, textvariable=self.audio_device_name_var)
+        self.audio_device_combo.pack(side="left", fill="x", expand=True)
+
+        ttk.Button(
+            row,
+            text="Refresh",
+            command=self._refresh_audio_devices,
+        ).pack(side="left", padx=(6, 0))
+
+        self._refresh_audio_devices()
+
+    def _refresh_audio_devices(self):
+        devices = _enumerate_loopback_devices()
+        current = self.audio_device_name_var.get()
+
+        self.audio_device_combo.configure(values=devices)
+
+        # Enumerating can fail to find hardware that's actually
+        # configured (unplugged, driver hiccup, etc.) - never wipe out
+        # an existing saved value just because a refresh came back
+        # empty or didn't include it.
+        self.audio_device_name_var.set(current)
 
     def _add_labeled_entry(self, parent, label, var):
         row = ttk.Frame(parent)
