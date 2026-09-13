@@ -78,7 +78,12 @@ def _pyinstaller_command():
 
     icon = SOURCE_ROOT / "icon.ico"
     if icon.exists():
+        # --icon sets the .exe file's own resource icon (what Explorer/
+        # Task Manager show). A running Tk window has a separate icon
+        # of its own (root.iconbitmap()) that needs the file bundled as
+        # actual data too, or it falls back to Tk's default icon.
         command.extend(["--icon", str(icon)])
+        command.extend(["--add-data", f"{icon};."])
 
     assets_dir = SOURCE_ROOT / "assets"
     if assets_dir.exists():

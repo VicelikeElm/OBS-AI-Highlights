@@ -37,6 +37,23 @@ BASE = _app_data_dir()
 CONFIG_FILE = BASE / "highlight_config.json"
 ENV_FILE = BASE / ".env"
 
+
+def resource_path(*parts):
+    """Resolves a bundled read-only resource (icon, logo image) both
+    from source and as a frozen build.
+
+    sys._MEIPASS is set by PyInstaller's bootloader (onedir and onefile
+    alike) to wherever --add-data actually placed bundled files - not
+    the same place REPO_ROOT points to once frozen, and not the same
+    thing as BASE above (which is user-writable settings, not a
+    read-only resource shipped with the app)."""
+    if getattr(sys, "frozen", False):
+        base = Path(sys._MEIPASS)
+    else:
+        base = REPO_ROOT
+
+    return base.joinpath(*parts)
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ENV_FILE)

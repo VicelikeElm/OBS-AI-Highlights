@@ -384,6 +384,11 @@ class MainApp:
 def run_gui():
     root = tk.Tk()
 
+    try:
+        root.iconbitmap(str(app_config.resource_path("icon.ico")))
+    except Exception:
+        pass
+
     if sv_ttk is not None:
         try:
             sv_ttk.set_theme("dark")

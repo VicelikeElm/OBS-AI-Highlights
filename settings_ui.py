@@ -9,9 +9,7 @@ codebase at all. Run directly:
     python settings_ui.py
 """
 
-import sys
 import tkinter as tk
-from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 try:
@@ -21,20 +19,6 @@ except Exception:
 
 import config as app_config
 import presets
-
-
-def _asset_path(*parts):
-    """Resolves a bundled asset both from source and as a frozen build.
-
-    sys._MEIPASS is set by PyInstaller's bootloader (onedir and onefile
-    alike) to wherever --add-data actually placed bundled files - not
-    the same place config.REPO_ROOT points to once frozen."""
-    if getattr(sys, "frozen", False):
-        base = Path(sys._MEIPASS)
-    else:
-        base = Path(__file__).resolve().parent
-
-    return base.joinpath(*parts)
 
 PHRASE_LIST_FIELDS = (
     ("strong_phrases", "Strong phrases (one per line)"),
@@ -210,7 +194,7 @@ class SettingsUI:
         content = ttk.Frame(parent)
         content.place(relx=0.5, rely=0.5, anchor="center")
 
-        logo_path = _asset_path("assets", "vivce_media_solutions_ui.png")
+        logo_path = app_config.resource_path("assets", "vivce_media_solutions_ui.png")
 
         try:
             self._about_logo_image = tk.PhotoImage(file=str(logo_path))
@@ -370,6 +354,11 @@ def main():
     root.title("OBS AI Highlights — Settings")
     root.geometry("760x680")
     root.minsize(700, 600)
+
+    try:
+        root.iconbitmap(str(app_config.resource_path("icon.ico")))
+    except Exception:
+        pass
 
     if sv_ttk is not None:
         try:
