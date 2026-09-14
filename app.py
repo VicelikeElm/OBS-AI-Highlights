@@ -163,6 +163,7 @@ class MainApp:
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_log_queue()
+        self._check_for_updates()
 
     # -----------------------------------------------------------
     # UI construction

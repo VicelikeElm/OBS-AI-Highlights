@@ -3,6 +3,6 @@
 updates. Bump APP_VERSION here, then in installer/OBSAIHighlights.iss's
 MyAppVersion (Inno Setup can't import Python) before building a release."""
 
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 
 GITHUB_REPO = "VicelikeElm/OBS-AI-Highlights"
