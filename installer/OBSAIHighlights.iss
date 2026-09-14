@@ -1,5 +1,5 @@
 #define MyAppName "OBS AI Highlights"
-#define MyAppVersion "0.3.1"
+#define MyAppVersion "0.3.2"
 #define MyAppPublisher "OBS AI Highlights"
 #define MyAppExeName "OBSAIHighlights.exe"
 
@@ -35,9 +35,9 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Source: "..\dist\OBSAIHighlights\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"
 Name: "{group}\Uninstall OBS AI Highlights"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch OBS AI Highlights"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"; Description: "Launch OBS AI Highlights"; Flags: nowait postinstall skipifsilent

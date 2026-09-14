@@ -10,6 +10,7 @@ codebase at all. Run directly:
 """
 
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 try:
@@ -204,7 +205,7 @@ class SettingsUI:
 
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text="OBS password", width=32, anchor="w").pack(side="left")
+        ttk.Label(row, text="OBS password", width=36, anchor="w").pack(side="left")
         ttk.Entry(row, textvariable=self.obs_password_var, show="*").pack(side="left", fill="x", expand=True)
 
         ttk.Label(
@@ -218,12 +219,22 @@ class SettingsUI:
         ).pack(fill="x", pady=(0, 12))
 
         self._add_labeled_folder(parent, "Recording folder", self.recording_folder_var)
-        self._add_labeled_folder(parent, "Output folder (blank = under recording folder)", self.output_folder_var)
-        self._add_labeled_folder(
+
+        self._add_labeled_folder(parent, "Output folder", self.output_folder_var)
+        ttk.Label(
             parent,
-            "Full-session SRT folder (optional cross-check)",
-            self.full_transcript_srt_folder_var,
-        )
+            text="Leave blank to save under the recording folder instead.",
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 8))
+
+        self._add_labeled_folder(parent, "Full-session SRT folder", self.full_transcript_srt_folder_var)
+        ttk.Label(
+            parent,
+            text="Optional - cross-checks a clip's trim against the full recording's own transcript.",
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 8))
 
         self._add_audio_device_row(parent)
         self._add_labeled_entry(parent, "Audio device fallback index", self.audio_device_fallback_var)
@@ -318,13 +329,13 @@ class SettingsUI:
     def _add_labeled_combo(self, parent, label, var, values):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text=label, width=32, anchor="w").pack(side="left")
+        ttk.Label(row, text=label, width=36, anchor="w").pack(side="left")
         ttk.Combobox(row, textvariable=var, values=values).pack(side="left", fill="x", expand=True)
 
     def _add_labeled_spinbox(self, parent, label, var, from_, to, increment, fmt=None):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text=label, width=32, anchor="w").pack(side="left")
+        ttk.Label(row, text=label, width=36, anchor="w").pack(side="left")
 
         kwargs = {}
         if fmt:
@@ -342,7 +353,7 @@ class SettingsUI:
     def _add_audio_device_row(self, parent):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text="Audio device (loopback)", width=32, anchor="w").pack(side="left")
+        ttk.Label(row, text="Audio device (loopback)", width=36, anchor="w").pack(side="left")
 
         self.audio_device_combo = ttk.Combobox(row, textvariable=self.audio_device_name_var)
         self.audio_device_combo.pack(side="left", fill="x", expand=True)
@@ -370,13 +381,13 @@ class SettingsUI:
     def _add_labeled_entry(self, parent, label, var):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text=label, width=32, anchor="w").pack(side="left")
+        ttk.Label(row, text=label, width=36, anchor="w").pack(side="left")
         ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
 
     def _add_labeled_folder(self, parent, label, var):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text=label, width=32, anchor="w").pack(side="left")
+        ttk.Label(row, text=label, width=36, anchor="w").pack(side="left")
         ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
         ttk.Button(
             row,
@@ -385,7 +396,13 @@ class SettingsUI:
         ).pack(side="left", padx=(6, 0))
 
     def _browse_folder(self, var):
-        chosen = filedialog.askdirectory(initialdir=var.get() or ".")
+        # A blank field used to fall back to ".", which for a Start-Menu-
+        # launched app with no explicit shortcut working directory is the
+        # app's own install folder - an easy, genuinely-hit mistake to
+        # pick as your "output folder" and one that later crashes with a
+        # PermissionError, since Program Files isn't writable. Default to
+        # the user's home folder instead - always exists, never that.
+        chosen = filedialog.askdirectory(initialdir=var.get() or str(Path.home()))
         if chosen:
             var.set(chosen)
 
@@ -491,6 +508,22 @@ class SettingsUI:
 
         if selected_key == "custom":
             config["custom_preset"] = self._collect_custom_preset()
+
+        for field, label in (
+            ("recording_folder", "Recording folder"),
+            ("output_folder", "Output folder"),
+            ("full_transcript_srt_folder", "Full-session SRT folder"),
+        ):
+            value = config.get(field, "")
+            if value and app_config.is_inside_install_dir(value):
+                messagebox.showerror(
+                    "Invalid folder",
+                    f'"{label}" is set to the app\'s own install folder:\n\n{value}\n\n'
+                    "That folder isn't writable without admin rights and isn't where "
+                    "your recordings live - pick a different folder (e.g. inside your "
+                    "user folder) and save again.",
+                )
+                return
 
         new_password = self.obs_password_var.get()
         if new_password:

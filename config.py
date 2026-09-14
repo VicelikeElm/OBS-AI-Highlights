@@ -153,13 +153,46 @@ def worker_launch_command(role):
     return [sys.executable, str(REPO_ROOT / "app.py"), "--worker", role]
 
 
+def _install_dir():
+    """Where the running app's own files live - Program Files for an
+    installed build, this repo folder from source."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return REPO_ROOT
+
+
+def is_inside_install_dir(path):
+    """True if `path` is the app's own install folder or somewhere under
+    it. An installed app can't write there without admin rights, so a
+    configured output folder that ends up here is always a mistake, not
+    a valid choice - most commonly a folder-picker dialog that opened
+    there by default and got accepted without noticing."""
+    try:
+        install_dir = _install_dir()
+        resolved = Path(path).resolve()
+        return resolved == install_dir or install_dir in resolved.parents
+    except Exception:
+        return False
+
+
 def get_output_folder(config):
     output = str(config.get("output_folder", "")).strip()
 
     if output:
-        return Path(output)
+        candidate = Path(output)
+    else:
+        candidate = Path(config.get("recording_folder", DEFAULTS["recording_folder"])) / "shorts" / "ai shorts"
 
-    return Path(config.get("recording_folder", DEFAULTS["recording_folder"])) / "shorts" / "ai shorts"
+    if is_inside_install_dir(candidate):
+        # A previously-saved bad value (see _is_inside_install_dir) would
+        # otherwise crash every launch with PermissionError trying to
+        # create folders inside Program Files - fall back to something
+        # always writable instead of failing outright. Settings still
+        # shows the original (wrong) saved value, so it's visible and
+        # fixable, but it can't crash the app anymore.
+        candidate = Path.home() / "OBS AI Highlights" / "shorts" / "ai shorts"
+
+    return candidate
 
 
 def get_full_transcript_srt_folder(config):
