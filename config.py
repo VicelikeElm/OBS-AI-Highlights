@@ -68,6 +68,8 @@ DEFAULTS = {
     "output_folder": "",
     "full_transcript_srt_folder": "",
     "audio_device_name": "",
+    "audio_loopback_device_name": "",
+    "audio_microphone_device_name": "",
     "audio_device_fallback_index": 0,
     "audio_source_type": "loopback",
     "whisper_model": "small",
@@ -144,11 +146,34 @@ def _migrate_single_custom_preset(config):
         config["preset"] = presets.make_custom_key(name)
 
 
+def _migrate_audio_device_name(config):
+    """v1.0.1 and earlier stored one "audio_device_name" reused for
+    whichever source type was active, since only one could be selected
+    at a time. "both" mode needs the loopback and microphone device
+    remembered independently - fold the old single value into whichever
+    new field matches the source type it was saved under, so an
+    already-configured device doesn't silently vanish on upgrade. Runs
+    on every load (cheap, idempotent) until the next save rewrites the
+    file with the new fields populated instead."""
+    old_name = str(config.get("audio_device_name", "")).strip()
+    if not old_name:
+        return
+
+    if config.get("audio_loopback_device_name") or config.get("audio_microphone_device_name"):
+        return
+
+    if config.get("audio_source_type") == "microphone":
+        config["audio_microphone_device_name"] = old_name
+    else:
+        config["audio_loopback_device_name"] = old_name
+
+
 def load_config():
     """Returns the config dict, DEFAULTS overlaid with whatever's saved."""
     config = dict(DEFAULTS)
     config.update(_read_json(CONFIG_FILE, {}))
     _migrate_single_custom_preset(config)
+    _migrate_audio_device_name(config)
     return config
 
 

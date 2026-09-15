@@ -127,18 +127,26 @@ OBS_REPLAY_FOLDER = CONFIG.get(
 # AUDIO
 # =========================================================
 
-# Configured per-install, since every machine's loopback device is
-# named differently. Falls back to a numeric device index if the name
-# doesn't match anything (e.g. on first run before it's configured).
-AUDIO_DEVICE_NAME = CONFIG.get("audio_device_name", "")
+# Configured per-install, since every machine's loopback/microphone
+# device is named differently. Falls back to a numeric device index if
+# the name doesn't match anything (e.g. on first run before it's
+# configured).
+AUDIO_LOOPBACK_DEVICE_NAME = CONFIG.get(
+    "audio_loopback_device_name", app_config.DEFAULTS["audio_loopback_device_name"]
+)
+AUDIO_MICROPHONE_DEVICE_NAME = CONFIG.get(
+    "audio_microphone_device_name", app_config.DEFAULTS["audio_microphone_device_name"]
+)
 
 AUDIO_DEVICE_FALLBACK = int(
     CONFIG.get("audio_device_fallback_index", 0)
 )
 
 # "loopback" (default) - what's being sent to an output/monitor device,
-# i.e. OBS's own audio mix - or "microphone" - a genuine input device,
-# for transcribing just a mic instead of the whole program mix.
+# i.e. OBS's own audio mix - "microphone" - a genuine input device, for
+# transcribing just a mic instead of the whole program mix - or "both",
+# which listens to and mixes both at once so a trigger phrase said into
+# either one still gets picked up.
 AUDIO_SOURCE_TYPE = CONFIG.get(
     "audio_source_type", app_config.DEFAULTS["audio_source_type"]
 )
@@ -285,9 +293,10 @@ def ensure_folders():
 # AUDIO DEVICE DISCOVERY
 # =========================================================
 
-def find_loopback_device(audio):
-
-    is_microphone_mode = AUDIO_SOURCE_TYPE == "microphone"
+def find_audio_device(audio, device_name, is_microphone):
+    """Resolves a configured device name to a live PortAudio device
+    index, for either role independently - "both" mode calls this twice
+    (once per role) against the same PyAudio instance."""
 
     exact_matches = []
     partial_matches = []
@@ -307,10 +316,10 @@ def find_loopback_device(audio):
             ""
         )
 
-        if name == AUDIO_DEVICE_NAME:
+        if name == device_name:
             exact_matches.append(index)
 
-        elif is_microphone_mode:
+        elif is_microphone:
             # No hardcoded name guess here - every machine's microphone
             # is named differently, unlike OBS's own default monitor
             # device. A genuine mic is any non-loopback input device.
@@ -362,7 +371,7 @@ def find_loopback_device(audio):
     except Exception:
         pass
 
-    if is_microphone_mode:
+    if is_microphone:
         raise RuntimeError(
             "Could not find a microphone/input device. "
             "Select one in Settings."
@@ -374,15 +383,182 @@ def find_loopback_device(audio):
     )
 
 
+def _downmix_to_mono(pcm_bytes, channels):
+    """Interleaved int16 PCM -> mono int16 PCM, by averaging channels.
+    A no-op for already-mono audio."""
+    if channels <= 1:
+        return pcm_bytes
+
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+    usable_length = (samples.size // channels) * channels
+    samples = samples[:usable_length].reshape(-1, channels)
+
+    return samples.mean(axis=1).astype(np.int16).tobytes()
+
+
+def _resample_mono(pcm_bytes, from_rate, to_rate):
+    """Linear-interpolation resample of mono int16 PCM - good enough for
+    speech transcription/loudness detection, not audiophile-grade.
+    Needed to line up two independent devices' sample rates before
+    mixing them; Python 3.13 removed the stdlib audioop module this
+    would otherwise have used."""
+    if from_rate == to_rate:
+        return pcm_bytes
+
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
+
+    if samples.size < 2:
+        return pcm_bytes
+
+    duration = samples.size / from_rate
+    target_count = max(1, int(round(duration * to_rate)))
+
+    original_positions = np.arange(samples.size)
+    target_positions = np.linspace(0, samples.size - 1, num=target_count)
+
+    resampled = np.interp(target_positions, original_positions, samples)
+
+    return resampled.astype(np.int16).tobytes()
+
+
+def _mix_mono(primary_bytes, secondary_bytes):
+    """Sums two mono int16 PCM buffers (same nominal rate), clipping
+    instead of overflowing on the rare instant both peak at once."""
+    primary = np.frombuffer(primary_bytes, dtype=np.int16).astype(np.int32)
+    secondary = np.frombuffer(secondary_bytes, dtype=np.int16).astype(np.int32)
+
+    length = min(primary.size, secondary.size)
+
+    mixed = primary[:length] + secondary[:length]
+    np.clip(mixed, -32768, 32767, out=mixed)
+
+    return mixed.astype(np.int16).tobytes()
+
+
+class _DualStreamCapture:
+    """Duck-types the subset of PyAudio's Stream interface
+    run_live_sermon() actually uses (.read()/.stop_stream()/.close()),
+    so its existing single-stream capture loop and stall/reopen recovery
+    logic keep working completely unchanged for "both" mode. Internally
+    reads both real streams every call and mixes them into one mono
+    buffer at the primary (loopback) stream's sample rate, so a trigger
+    phrase said into either device shows up in the same transcript."""
+
+    def __init__(
+        self,
+        primary_stream, primary_rate, primary_channels,
+        secondary_stream, secondary_rate, secondary_channels,
+    ):
+        self._primary_stream = primary_stream
+        self._primary_rate = primary_rate
+        self._primary_channels = primary_channels
+        self._secondary_stream = secondary_stream
+        self._secondary_rate = secondary_rate
+        self._secondary_channels = secondary_channels
+
+    def read(self, frame_count, exception_on_overflow=False):
+        secondary_frame_count = max(
+            1,
+            round(frame_count * self._secondary_rate / self._primary_rate),
+        )
+
+        primary_data = self._primary_stream.read(
+            frame_count, exception_on_overflow=exception_on_overflow
+        )
+        secondary_data = self._secondary_stream.read(
+            secondary_frame_count, exception_on_overflow=exception_on_overflow
+        )
+
+        primary_mono = _downmix_to_mono(primary_data, self._primary_channels)
+        secondary_mono = _downmix_to_mono(secondary_data, self._secondary_channels)
+        secondary_mono = _resample_mono(
+            secondary_mono, self._secondary_rate, self._primary_rate
+        )
+
+        return _mix_mono(primary_mono, secondary_mono)
+
+    def stop_stream(self):
+        self._primary_stream.stop_stream()
+        self._secondary_stream.stop_stream()
+
+    def close(self):
+        self._primary_stream.close()
+        self._secondary_stream.close()
+
+
 def open_loopback_stream():
     """
-    Creates a fresh PyAudio instance + loopback stream. Used both at
-    startup and to recover after the audio stream stalls out.
+    Creates a fresh PyAudio instance + audio stream (or, in "both" mode,
+    a pair of real streams wrapped behind one stream-shaped object - see
+    _DualStreamCapture). Used both at startup and to recover after the
+    audio stream stalls out.
     """
 
     audio = pyaudio.PyAudio()
 
-    device_index = find_loopback_device(audio)
+    if AUDIO_SOURCE_TYPE == "both":
+
+        loopback_index = find_audio_device(
+            audio, AUDIO_LOOPBACK_DEVICE_NAME, is_microphone=False
+        )
+        microphone_index = find_audio_device(
+            audio, AUDIO_MICROPHONE_DEVICE_NAME, is_microphone=True
+        )
+
+        loopback_info = audio.get_device_info_by_index(loopback_index)
+        microphone_info = audio.get_device_info_by_index(microphone_index)
+
+        loopback_rate = int(loopback_info["defaultSampleRate"])
+        loopback_channels = int(loopback_info["maxInputChannels"])
+        microphone_rate = int(microphone_info["defaultSampleRate"])
+        microphone_channels = int(microphone_info["maxInputChannels"])
+
+        loopback_stream = audio.open(
+            format=pyaudio.paInt16,
+            channels=loopback_channels,
+            rate=loopback_rate,
+            input=True,
+            input_device_index=loopback_index,
+            frames_per_buffer=1024,
+        )
+
+        try:
+            microphone_stream = audio.open(
+                format=pyaudio.paInt16,
+                channels=microphone_channels,
+                rate=microphone_rate,
+                input=True,
+                input_device_index=microphone_index,
+                frames_per_buffer=1024,
+            )
+        except Exception:
+            try:
+                loopback_stream.close()
+            except Exception:
+                pass
+            raise
+
+        log(
+            f"Listening to loopback device {loopback_index} "
+            f"({loopback_info['name']}) + microphone device "
+            f"{microphone_index} ({microphone_info['name']})"
+        )
+
+        stream = _DualStreamCapture(
+            loopback_stream, loopback_rate, loopback_channels,
+            microphone_stream, microphone_rate, microphone_channels,
+        )
+
+        return audio, stream, loopback_index, loopback_rate, 1
+
+    is_microphone_mode = AUDIO_SOURCE_TYPE == "microphone"
+
+    device_name = (
+        AUDIO_MICROPHONE_DEVICE_NAME if is_microphone_mode
+        else AUDIO_LOOPBACK_DEVICE_NAME
+    )
+
+    device_index = find_audio_device(audio, device_name, is_microphone_mode)
 
     device_info = audio.get_device_info_by_index(
         device_index
@@ -403,6 +579,10 @@ def open_loopback_stream():
         input=True,
         input_device_index=device_index,
         frames_per_buffer=1024,
+    )
+
+    log(
+        f"Listening to device {device_index}: {device_info['name']}"
     )
 
     return audio, stream, device_index, rate, channels
@@ -1612,11 +1792,6 @@ def run_live_sermon(
     )
 
     log()
-    log(
-        f"Listening to device "
-        f"{device_index}: "
-        f"{audio.get_device_info_by_index(device_index)['name']}"
-    )
 
     # -----------------------------------------------------
     # SESSION STATE

@@ -127,6 +127,7 @@ RENDER_ENCODER_KEY_BY_LABEL = {v: k for k, v in RENDER_ENCODER_LABELS.items()}
 AUDIO_SOURCE_TYPE_LABELS = {
     "loopback": "Loopback (what OBS sends to output)",
     "microphone": "Microphone (direct input)",
+    "both": "Both (loopback + microphone)",
 }
 AUDIO_SOURCE_TYPE_KEY_BY_LABEL = {v: k for k, v in AUDIO_SOURCE_TYPE_LABELS.items()}
 
@@ -155,7 +156,8 @@ class SettingsUI:
         self.output_folder_var = tk.StringVar()
         self.full_transcript_srt_folder_var = tk.StringVar()
         self.audio_source_type_var = tk.StringVar()
-        self.audio_device_name_var = tk.StringVar()
+        self.audio_loopback_device_name_var = tk.StringVar()
+        self.audio_microphone_device_name_var = tk.StringVar()
         self.audio_device_fallback_var = tk.StringVar()
         self.remote_api_enabled_var = tk.BooleanVar()
         self.remote_api_port_var = tk.StringVar()
@@ -1033,13 +1035,29 @@ class SettingsUI:
             "<<ComboboxSelected>>", lambda _event: self._refresh_audio_devices()
         )
 
-        row = ttk.Frame(parent)
-        row.pack(fill="x", pady=4)
-        self.audio_device_row_label = ttk.Label(row, text="Audio device", width=36, anchor="w")
-        self.audio_device_row_label.pack(side="left")
+        # Two independent rows, one per role - "both" mode shows both at
+        # once so each device can be picked separately; loopback/
+        # microphone mode shows only the one that's relevant. Built once
+        # up front and shown/hidden via pack()/pack_forget() rather than
+        # rebuilt, so each keeps its own combobox state across switches.
+        self._audio_device_rows = ttk.Frame(parent)
+        self._audio_device_rows.pack(fill="x")
 
-        self.audio_device_combo = ttk.Combobox(row, textvariable=self.audio_device_name_var)
-        self.audio_device_combo.pack(side="left", fill="x", expand=True)
+        self.audio_loopback_row, self.audio_loopback_combo = self._build_one_audio_device_row(
+            self._audio_device_rows, "Audio device (loopback)", self.audio_loopback_device_name_var
+        )
+        self.audio_microphone_row, self.audio_microphone_combo = self._build_one_audio_device_row(
+            self._audio_device_rows, "Audio device (microphone)", self.audio_microphone_device_name_var
+        )
+
+        self._refresh_audio_devices()
+
+    def _build_one_audio_device_row(self, parent, label_text, var):
+        row = ttk.Frame(parent)
+        ttk.Label(row, text=label_text, width=36, anchor="w").pack(side="left")
+
+        combo = ttk.Combobox(row, textvariable=var)
+        combo.pack(side="left", fill="x", expand=True)
 
         ttk.Button(
             row,
@@ -1047,30 +1065,37 @@ class SettingsUI:
             command=self._refresh_audio_devices,
         ).pack(side="left", padx=(6, 0))
 
-        self._refresh_audio_devices()
+        return row, combo
 
     def _refresh_audio_devices(self):
-        is_microphone_mode = (
-            AUDIO_SOURCE_TYPE_KEY_BY_LABEL.get(self.audio_source_type_var.get())
-            == "microphone"
+        source_key = AUDIO_SOURCE_TYPE_KEY_BY_LABEL.get(
+            self.audio_source_type_var.get(), "loopback"
         )
 
-        if is_microphone_mode:
-            devices = _enumerate_input_devices()
-            self.audio_device_row_label.configure(text="Audio device (microphone)")
-        else:
+        show_loopback = source_key in ("loopback", "both")
+        show_microphone = source_key in ("microphone", "both")
+
+        if show_loopback:
             devices = _enumerate_loopback_devices()
-            self.audio_device_row_label.configure(text="Audio device (loopback)")
+            current = self.audio_loopback_device_name_var.get()
+            self.audio_loopback_combo.configure(values=devices)
+            # Enumerating can fail to find hardware that's actually
+            # configured (unplugged, driver hiccup, etc.) - never wipe
+            # out an existing saved value just because a refresh came
+            # back empty or didn't include it.
+            self.audio_loopback_device_name_var.set(current)
+            self.audio_loopback_row.pack(fill="x", pady=4)
+        else:
+            self.audio_loopback_row.pack_forget()
 
-        current = self.audio_device_name_var.get()
-
-        self.audio_device_combo.configure(values=devices)
-
-        # Enumerating can fail to find hardware that's actually
-        # configured (unplugged, driver hiccup, etc.) - never wipe out
-        # an existing saved value just because a refresh came back
-        # empty or didn't include it.
-        self.audio_device_name_var.set(current)
+        if show_microphone:
+            devices = _enumerate_input_devices()
+            current = self.audio_microphone_device_name_var.get()
+            self.audio_microphone_combo.configure(values=devices)
+            self.audio_microphone_device_name_var.set(current)
+            self.audio_microphone_row.pack(fill="x", pady=4)
+        else:
+            self.audio_microphone_row.pack_forget()
 
     def _add_labeled_entry(self, parent, label, var, label_width=36):
         row = ttk.Frame(parent)
@@ -1127,7 +1152,8 @@ class SettingsUI:
         self.audio_source_type_var.set(
             AUDIO_SOURCE_TYPE_LABELS.get(audio_source_type, AUDIO_SOURCE_TYPE_LABELS["loopback"])
         )
-        self.audio_device_name_var.set(str(config.get("audio_device_name", "")))
+        self.audio_loopback_device_name_var.set(str(config.get("audio_loopback_device_name", "")))
+        self.audio_microphone_device_name_var.set(str(config.get("audio_microphone_device_name", "")))
         self._refresh_audio_devices()
         self.audio_device_fallback_var.set(str(config.get("audio_device_fallback_index", 0)))
         self.remote_api_enabled_var.set(bool(config.get("remote_api_enabled", True)))
@@ -1399,7 +1425,8 @@ class SettingsUI:
         config["audio_source_type"] = AUDIO_SOURCE_TYPE_KEY_BY_LABEL.get(
             self.audio_source_type_var.get(), "loopback"
         )
-        config["audio_device_name"] = self.audio_device_name_var.get().strip()
+        config["audio_loopback_device_name"] = self.audio_loopback_device_name_var.get().strip()
+        config["audio_microphone_device_name"] = self.audio_microphone_device_name_var.get().strip()
         config["whisper_model"] = self.whisper_model_var.get().strip()
         config["whisper_device"] = self.whisper_device_var.get().strip()
         config["whisper_compute_type"] = self.whisper_compute_type_var.get().strip()
