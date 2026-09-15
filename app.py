@@ -29,17 +29,13 @@ from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 
 try:
-    import sv_ttk
-except Exception:
-    sv_ttk = None
-
-try:
     import psutil
 except Exception:
     psutil = None
 
 import config as app_config
 import clip_manager
+import ui_theme
 import session_stats
 from settings_ui import SettingsUI
 from version import APP_VERSION, GITHUB_REPO
@@ -48,6 +44,16 @@ WORKER_LABELS = {
     "capture": "Highlight Capture",
     "verify": "Verify Clips",
     "render": "Render Clips",
+}
+
+CLIP_STATUS_FILTER_VALUES = ["Pending", "Review", "Verified", "Rejected"]
+
+CLIP_SORT_KEY_FUNCS = {
+    "clip": lambda clip: clip["base_name"],
+    "score": lambda clip: clip["score"] if clip["score"] is not None else -1,
+    "status": lambda clip: clip["status"],
+    "duration": lambda clip: clip["duration"] if clip["duration"] is not None else -1,
+    "rendered": lambda clip: clip["rendered"],
 }
 
 
@@ -139,12 +145,15 @@ class MainApp:
         self.root.geometry("880x700")
         self.root.minsize(780, 600)
 
+        self._text_widget_colors = ui_theme.text_widget_colors(ui_theme.get_theme())
+
         self.active_process = None
         self.active_role = None
         self.log_queue = queue.Queue()
         self.update_queue = queue.Queue()
         self.download_queue = queue.Queue()
         self.clip_render_queue = queue.Queue()
+        self._encoder_fallback_notice_shown = False
         self._latest_release_url = None
         self._latest_asset_url = None
         self._latest_asset_size = None
@@ -167,13 +176,18 @@ class MainApp:
         self._build_run_tab(run_tab)
         self._build_clips_tab(clips_tab)
         self._build_sessions_tab(sessions_tab)
-        self.settings_ui = SettingsUI(settings_tab)
+        self.settings_ui = SettingsUI(settings_tab, on_theme_change=self._apply_theme_to_text_widgets)
         self._build_updates_tab(updates_tab)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_log_queue()
         self._poll_clip_render_queue()
         self._check_for_updates()
+
+        # See _apply_theme_to_text_widgets()'s own docstring for why this
+        # re-application (not just the colors each Text widget was
+        # constructed with) is needed.
+        self._apply_theme_to_text_widgets(ui_theme.get_theme())
 
     # -----------------------------------------------------------
     # UI construction
@@ -244,8 +258,7 @@ class MainApp:
             log_frame,
             state="disabled",
             wrap="word",
-            background="#111111",
-            foreground="#DDDDDD",
+            **self._text_widget_colors,
         )
         scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
@@ -311,8 +324,7 @@ class MainApp:
             height=14,
             state="disabled",
             wrap="word",
-            background="#111111",
-            foreground="#DDDDDD",
+            **self._text_widget_colors,
         )
         self.session_detail_text.pack(fill="both", expand=True)
 
@@ -450,23 +462,53 @@ class MainApp:
             text=(
                 "Every detected clip, across every pipeline stage - play it, approve or reject "
                 "a Review clip, render a Verified one on demand, or delete it outright. "
-                "Ctrl+click or Shift+click to select several at once and act on them together."
+                "Ctrl+click or Shift+click to select several at once and act on them together. "
+                "Click a column header to sort."
             ),
             wraplength=680,
         ).pack(anchor="w", pady=(0, 8))
+
+        filter_row = ttk.Frame(parent)
+        filter_row.pack(fill="x", pady=(0, 6))
+
+        ttk.Label(filter_row, text="Status:").pack(side="left")
+
+        self.clip_status_filter_var = tk.StringVar(value="All")
+        self.clip_status_filter_combo = ttk.Combobox(
+            filter_row,
+            textvariable=self.clip_status_filter_var,
+            values=["All"] + CLIP_STATUS_FILTER_VALUES,
+            state="readonly",
+            width=12,
+        )
+        self.clip_status_filter_combo.pack(side="left", padx=(8, 0))
+        self.clip_status_filter_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._refresh_clips_list()
+        )
 
         list_frame = ttk.Frame(parent)
         list_frame.pack(fill="both", expand=True)
 
         columns = ("clip", "score", "status", "duration", "rendered")
+        self._clip_column_labels = {
+            "clip": "Clip",
+            "score": "Score",
+            "status": "Status",
+            "duration": "Duration",
+            "rendered": "Rendered",
+        }
+        self._clips_sort_key = None
+        self._clips_sort_reverse = False
+
         self.clips_tree = ttk.Treeview(
             list_frame, columns=columns, show="headings", height=8, selectmode="extended"
         )
-        self.clips_tree.heading("clip", text="Clip")
-        self.clips_tree.heading("score", text="Score")
-        self.clips_tree.heading("status", text="Status")
-        self.clips_tree.heading("duration", text="Duration")
-        self.clips_tree.heading("rendered", text="Rendered")
+        for column in columns:
+            self.clips_tree.heading(
+                column,
+                text=self._clip_column_labels[column],
+                command=lambda c=column: self._sort_clips_by(c),
+            )
         self.clips_tree.column("clip", width=220)
         self.clips_tree.column("score", width=60, anchor="center")
         self.clips_tree.column("status", width=90, anchor="center")
@@ -515,12 +557,20 @@ class MainApp:
             height=14,
             state="disabled",
             wrap="word",
-            background="#111111",
-            foreground="#DDDDDD",
+            **self._text_widget_colors,
         )
         self.clip_detail_text.pack(fill="both", expand=True)
 
         self._clip_by_iid = {}
+        self._refresh_clips_list()
+
+    def _sort_clips_by(self, column):
+        if self._clips_sort_key == column:
+            self._clips_sort_reverse = not self._clips_sort_reverse
+        else:
+            self._clips_sort_key = column
+            self._clips_sort_reverse = False
+
         self._refresh_clips_list()
 
     def _refresh_clips_list(self):
@@ -529,7 +579,25 @@ class MainApp:
 
         self._clip_by_iid = {}
 
-        for clip in clip_manager.list_clips():
+        clips = clip_manager.list_clips()
+
+        status_filter = self.clip_status_filter_var.get()
+        if status_filter != "All":
+            clips = [clip for clip in clips if clip["status"] == status_filter]
+
+        if self._clips_sort_key:
+            clips.sort(
+                key=CLIP_SORT_KEY_FUNCS[self._clips_sort_key],
+                reverse=self._clips_sort_reverse,
+            )
+
+        for column, label in self._clip_column_labels.items():
+            indicator = ""
+            if column == self._clips_sort_key:
+                indicator = " ▼" if self._clips_sort_reverse else " ▲"
+            self.clips_tree.heading(column, text=label + indicator)
+
+        for clip in clips:
             iid = self.clips_tree.insert(
                 "",
                 "end",
@@ -700,11 +768,58 @@ class MainApp:
                 self.clip_delete_button.configure(state="normal")
 
                 self._report_bulk_result("Render", results)
+                self._notify_encoder_fallback_once()
                 self._refresh_clips_list()
         except queue.Empty:
             pass
 
         self.root.after(100, self._poll_clip_render_queue)
+
+    def _apply_theme_to_text_widgets(self, theme):
+        """sv_ttk retheming every ttk widget happens on its own the moment
+        SettingsUI calls ui_theme.apply_theme() - this only has to catch
+        the few plain tk.Text widgets sv_ttk can't reach (see
+        ui_theme.py's own docstring).
+
+        sv_ttk's own <<ThemeChanged>> handling (tk_setPalette, in its
+        bundled sv.tcl) also walks and recolors every existing plain-tk
+        widget - including these same Text widgets, clobbering whatever
+        was just set here - but via a queued event, not synchronously,
+        so exactly when that lands relative to this call isn't reliable
+        to depend on. Applying now (best-effort, avoids a flash of the
+        wrong colors) and again via after_idle (once every already-
+        queued Tk event, that clobbering included, has drained)
+        guarantees this is the last word regardless of that timing."""
+        self._text_widget_colors = ui_theme.text_widget_colors(theme)
+
+        def _apply():
+            for widget in (self.log_text, self.session_detail_text, self.clip_detail_text):
+                widget.configure(**self._text_widget_colors)
+
+        _apply()
+        self.root.after_idle(_apply)
+
+    def _notify_encoder_fallback_once(self):
+        """A render triggered from the Clips tab runs in-process (no
+        console for a --windowed build to print render_clips.py's own
+        fallback warning to), so without this, NVENC silently failing
+        and falling back to CPU would just look like an unexplained
+        slowdown. Shown at most once per app run, not every render."""
+        if self._encoder_fallback_notice_shown:
+            return
+
+        if not clip_manager.encoder_fallback_active():
+            return
+
+        self._encoder_fallback_notice_shown = True
+
+        messagebox.showinfo(
+            "Render encoder",
+            "NVENC isn't available on this machine (no NVIDIA GPU, or the driver is too "
+            "old), so rendering is using CPU/software encoding instead - it'll work, just "
+            "slower. Switch 'Render encoder' to CPU / Software on the Settings tab's Video "
+            "Style page to skip this check on future renders.",
+        )
 
     def _delete_selected_clip(self):
         base_names = self._selected_clip_base_names()
@@ -1046,11 +1161,7 @@ def run_gui():
     except Exception:
         pass
 
-    if sv_ttk is not None:
-        try:
-            sv_ttk.set_theme("dark")
-        except Exception:
-            pass
+    ui_theme.apply_theme(ui_theme.get_theme())
 
     MainApp(root)
 

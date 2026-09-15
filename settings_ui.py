@@ -14,15 +14,11 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
-try:
-    import sv_ttk
-except Exception:
-    sv_ttk = None
-
 import caption_styles
 import config as app_config
 import presets
 import render_styles
+import ui_theme
 
 
 def _enumerate_loopback_devices():
@@ -87,6 +83,12 @@ SCENE_ACTION_LABELS = {
 }
 SCENE_ACTION_KEY_BY_LABEL = {v: k for k, v in SCENE_ACTION_LABELS.items()}
 
+RENDER_ENCODER_LABELS = {
+    "nvenc": "NVENC (GPU, fastest)",
+    "cpu": "CPU / Software (no GPU needed, slower)",
+}
+RENDER_ENCODER_KEY_BY_LABEL = {v: k for k, v in RENDER_ENCODER_LABELS.items()}
+
 PHRASE_LIST_FIELDS = (
     ("strong_phrases", "Strong phrases (one per line)"),
     ("application_phrases", "Application / call-to-action phrases"),
@@ -97,11 +99,13 @@ PHRASE_LIST_FIELDS = (
 
 
 class SettingsUI:
-    def __init__(self, parent):
+    def __init__(self, parent, on_theme_change=None):
         self.parent = parent
+        self._on_theme_change = on_theme_change
 
         self.config = app_config.load_config()
 
+        self.theme_var = tk.StringVar()
         self.preset_var = tk.StringVar()
         self.obs_host_var = tk.StringVar()
         self.obs_port_var = tk.StringVar()
@@ -131,6 +135,7 @@ class SettingsUI:
         self.pause_end_pattern_var = tk.StringVar()
 
         self.render_style_var = tk.StringVar()
+        self.render_encoder_var = tk.StringVar()
         self.caption_style_var = tk.StringVar()
         self.caption_font_name_var = tk.StringVar()
         self.caption_font_size_var = tk.StringVar()
@@ -424,6 +429,31 @@ class SettingsUI:
             foreground="#888888",
         ).pack(fill="x", pady=(0, 10))
 
+        encoder_row = ttk.Frame(parent)
+        encoder_row.pack(fill="x", pady=(0, 4))
+
+        ttk.Label(encoder_row, text="Render encoder:").pack(side="left")
+
+        self.render_encoder_combo = ttk.Combobox(
+            encoder_row,
+            textvariable=self.render_encoder_var,
+            values=list(RENDER_ENCODER_LABELS.values()),
+            state="readonly",
+            width=32,
+        )
+        self.render_encoder_combo.pack(side="left", padx=(8, 0))
+
+        ttk.Label(
+            parent,
+            text=(
+                "CPU / Software works on any machine but is much slower than NVENC. NVENC also "
+                "auto-detects at render time and falls back to CPU on its own if it isn't actually "
+                "usable - set this explicitly only to skip that check or force software encoding."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(2, 10))
+
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 10))
 
         top_row = ttk.Frame(parent)
@@ -521,6 +551,25 @@ class SettingsUI:
 
         ttk.Button(button_row, text="Refresh Preview", command=self._update_caption_preview).pack(side="left")
         ttk.Button(button_row, text="Save", command=self._save).pack(side="right")
+
+    def _current_theme_key(self):
+        return ui_theme.THEME_KEY_BY_LABEL.get(self.theme_var.get(), ui_theme.DEFAULT_THEME)
+
+    def _on_theme_selected(self):
+        # Applies instantly (sv_ttk is built for live switching) and
+        # persists right away too - unlike the rest of this form, a
+        # theme choice isn't something you'd want to preview then
+        # discard by navigating away without pressing Save.
+        theme = self._current_theme_key()
+
+        ui_theme.apply_theme(theme)
+
+        config = app_config.load_config()
+        config["theme"] = theme
+        app_config.save_config(config)
+
+        if self._on_theme_change:
+            self._on_theme_change(theme)
 
     def _current_render_style_key(self):
         label = self.render_style_var.get()
@@ -728,6 +777,21 @@ class SettingsUI:
         return rules
 
     def _build_about_tab(self, parent):
+        appearance_row = ttk.Frame(parent)
+        appearance_row.pack(fill="x", padx=20, pady=(16, 0))
+
+        ttk.Label(appearance_row, text="Theme:").pack(side="left")
+
+        self.theme_combo = ttk.Combobox(
+            appearance_row,
+            textvariable=self.theme_var,
+            values=list(ui_theme.THEME_LABELS.values()),
+            state="readonly",
+            width=10,
+        )
+        self.theme_combo.pack(side="left", padx=(8, 0))
+        self.theme_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_theme_selected())
+
         content = ttk.Frame(parent)
         content.place(relx=0.5, rely=0.5, anchor="center")
 
@@ -872,6 +936,8 @@ class SettingsUI:
     def _load_config_into_fields(self):
         config = self.config
 
+        self.theme_var.set(ui_theme.THEME_LABELS[ui_theme.get_theme(config)])
+
         active_key = config.get("preset", presets.DEFAULT_PRESET)
         active_preset = presets.get_preset(active_key, config.get("custom_profiles", {}))
         self.preset_var.set(active_preset["label"])
@@ -906,6 +972,11 @@ class SettingsUI:
         active_render_key = config.get("render_style", render_styles.DEFAULT_STYLE)
         self.render_style_var.set(render_styles.get_style(active_render_key)["label"])
         self._update_render_style_hint()
+
+        active_encoder_key = config.get("render_encoder", "nvenc")
+        self.render_encoder_var.set(
+            RENDER_ENCODER_LABELS.get(active_encoder_key, RENDER_ENCODER_LABELS["nvenc"])
+        )
 
         active_caption_key = config.get("caption_style", caption_styles.DEFAULT_STYLE)
         active_caption_style = caption_styles.get_style(active_caption_key, config.get("custom_caption_style"))
@@ -1135,6 +1206,7 @@ class SettingsUI:
         # can write to the same config file independently, and starting
         # from a stale snapshot here would silently revert those.
         config = app_config.load_config()
+        config["theme"] = self._current_theme_key()
         config["preset"] = selected_key
         config["obs_host"] = self.obs_host_var.get().strip()
         config["recording_folder"] = self.recording_folder_var.get().strip()
@@ -1175,6 +1247,9 @@ class SettingsUI:
             config["custom_profiles"][profile_name] = self._collect_profile_fields()
 
         config["render_style"] = self._current_render_style_key()
+        config["render_encoder"] = RENDER_ENCODER_KEY_BY_LABEL.get(
+            self.render_encoder_var.get(), "nvenc"
+        )
 
         config["caption_style"] = caption_style_key
         if caption_style_key == "custom":
@@ -1219,11 +1294,7 @@ def main():
     except Exception:
         pass
 
-    if sv_ttk is not None:
-        try:
-            sv_ttk.set_theme("dark")
-        except Exception:
-            pass
+    ui_theme.apply_theme(ui_theme.get_theme())
 
     SettingsUI(root)
 

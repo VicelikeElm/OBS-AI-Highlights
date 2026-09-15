@@ -28,9 +28,9 @@ OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
 
 # Encoding
-VIDEO_CODEC = "h264_nvenc"
+RENDER_ENCODER = CONFIG.get("render_encoder", app_config.DEFAULTS["render_encoder"])
 
-# RTX 2070 NVENC quality setting
+# NVENC quality setting
 NVENC_PRESET = "p5"
 
 # CQ: lower = better quality / larger file
@@ -59,6 +59,107 @@ def _ffmpeg_executable():
 
 
 FFMPEG_EXECUTABLE = _ffmpeg_executable()
+
+
+def _nvenc_available():
+    """A real (but trivial, near-instant) test encode - NVENC can be
+    compiled into ffmpeg and still fail at runtime if the GPU driver is
+    too old (a real failure mode hit repeatedly on this very machine
+    during development: "Driver does not support the required nvenc
+    API version"). Just listing encoders wouldn't catch that; only
+    actually trying one does."""
+
+    try:
+        result = subprocess.run(
+            [
+                FFMPEG_EXECUTABLE,
+                "-f", "lavfi",
+                "-i", "color=c=black:s=64x64:d=0.1",
+                "-c:v", "h264_nvenc",
+                "-frames:v", "1",
+                "-f", "null",
+                "-",
+            ],
+            capture_output=True,
+            timeout=10,
+        )
+
+        return result.returncode == 0
+
+    except Exception:
+        return False
+
+
+def _build_encode_args(encoder):
+    if encoder == "cpu":
+        # libopenh264 - a BSD-licensed software H.264 encoder, no GPU
+        # needed, already included in the bundled LGPL ffmpeg build
+        # alongside NVENC (see build_app_windows.py). Much slower than
+        # hardware encoding, but the only way to render at all on a
+        # machine without an NVIDIA GPU. -rc_mode isn't set (its
+        # "quality" default already targets these bitrate caps rather
+        # than a fixed rate).
+        return [
+            "-c:v", "libopenh264",
+            "-b:v", "6M",
+            "-maxrate", "8M",
+            "-bufsize", "12M",
+        ]
+
+    # NVENC hardware encoding (default).
+    return [
+        "-c:v", "h264_nvenc",
+        "-preset", NVENC_PRESET,
+        "-rc", "vbr",
+        "-cq", CQ,
+        "-b:v", "0",
+    ]
+
+
+# Resolved lazily (on the first actual render, not on import - importing
+# this module, e.g. from clip_manager.py for the Clips tab, shouldn't pay
+# for a probe subprocess call every time the GUI starts) and cached for
+# the rest of this process's lifetime, so a batch of many render jobs in
+# one run only probes once. Deliberately never rewrites RENDER_ENCODER
+# (the user's saved setting) - a fallback here only affects this
+# process's renders, so if the GPU driver gets fixed later, the next
+# run naturally tries NVENC again instead of being stuck on CPU forever.
+_resolved_encoder = None
+_video_encode_args = None
+
+
+def _get_video_encode_args():
+    global _resolved_encoder, _video_encode_args
+
+    if _video_encode_args is not None:
+        return _video_encode_args
+
+    _resolved_encoder = RENDER_ENCODER
+
+    if RENDER_ENCODER == "nvenc" and not _nvenc_available():
+        print()
+        print(
+            "WARNING: NVENC isn't available on this machine (no NVIDIA "
+            "GPU, or the driver is too old) - falling back to CPU/"
+            "software encoding for this render, which will be slower. "
+            "Switch 'Render encoder' to CPU / Software in Settings to "
+            "skip this check next time."
+        )
+        _resolved_encoder = "cpu"
+
+    _video_encode_args = _build_encode_args(_resolved_encoder)
+
+    return _video_encode_args
+
+
+def encoder_in_use():
+    """The actual encoder the next render will use - may differ from the
+    RENDER_ENCODER setting if NVENC was requested but isn't actually
+    available on this machine (see _nvenc_available())."""
+
+    _get_video_encode_args()
+
+    return _resolved_encoder
 
 
 # =========================================================
@@ -550,23 +651,10 @@ def render_job(job):
         "0:a?",
 
         # -----------------------------------------------
-        # RTX 2070 NVENC
+        # VIDEO ENCODER (NVENC or CPU/libopenh264 - see RENDER_ENCODER)
         # -----------------------------------------------
 
-        "-c:v",
-        VIDEO_CODEC,
-
-        "-preset",
-        NVENC_PRESET,
-
-        "-rc",
-        "vbr",
-
-        "-cq",
-        CQ,
-
-        "-b:v",
-        "0",
+        *_get_video_encode_args(),
 
         # YouTube-friendly pixel format
         "-pix_fmt",

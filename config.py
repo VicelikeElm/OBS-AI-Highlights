@@ -87,6 +87,8 @@ DEFAULTS = {
     "remote_api_enabled": True,
     "remote_api_port": 8756,
     "render_style": "blurred_background",
+    "render_encoder": "nvenc",
+    "theme": "dark",
     "scene_rules": [],
     "audio_excitement_enabled": True,
     "audio_excitement_moderate_ratio": 1.6,

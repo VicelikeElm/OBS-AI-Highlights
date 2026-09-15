@@ -318,6 +318,17 @@ def render_clip(base_name):
     return False, "FFmpeg render failed - see the console/log for details."
 
 
+def encoder_fallback_active():
+    """True if rendering is using CPU/software encoding even though
+    "nvenc" is the configured setting - i.e. render_clips.py's own
+    startup probe found NVENC isn't actually usable on this machine
+    (see its _nvenc_available()). Used by the Clips tab to show a
+    one-time heads-up, since a render triggered from there runs
+    in-process (no console) and would otherwise silently just be
+    slower with no visible explanation."""
+    return render_clips.RENDER_ENCODER == "nvenc" and render_clips.encoder_in_use() == "cpu"
+
+
 def delete_clip(base_name):
     """Permanently deletes every file across every stage that shares this
     base_name - the raw video, its candidate transcript, Verified/Review

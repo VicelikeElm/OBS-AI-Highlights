@@ -56,7 +56,8 @@ Highlights** from the Start Menu. One window, five tabs:
   reject is easy to undo), Render a Verified one right now instead of
   waiting for the next batch, or Delete a clip you don't want outright.
   Ctrl+click/Shift+click to select several clips and approve, reject,
-  render, or delete them all at once.
+  render, or delete them all at once. Filter by status and click a
+  column header to sort.
 - **Sessions** — every capture run is tracked as a session: how many
   moments were analyzed, how many were ignored/possible/saved, the
   average score, and which phrases were actually most responsible for
@@ -65,8 +66,10 @@ Highlights** from the Start Menu. One window, five tabs:
   from here (clip files themselves aren't touched).
 - **Settings** — pick a preset, tune caption/render styling, set your OBS
   connection details and password, point it at your recording/output
-  folders, and set up Scene Rules (e.g. a "BRB" scene pauses clipping, a
-  "Gameplay" scene switches to the Gaming preset automatically).
+  folders, set up Scene Rules (e.g. a "BRB" scene pauses clipping, a
+  "Gameplay" scene switches to the Gaming preset automatically), and
+  switch between a Dark and Light theme (on the About tab) - applies
+  instantly, no restart needed.
 - **Updates** — checks automatically on launch, or on demand, and can
   download and install a newer version without leaving the app.
 
@@ -76,11 +79,19 @@ install separately for rendering. If it's ever missing (e.g. running from
 source without it on PATH), the app tells you clearly rather than failing
 silently.
 
-The one real prerequisite: an NVIDIA GPU + driver, for the default (CUDA)
-Whisper transcription and the NVENC video encoder used when rendering -
-switch `whisper_device`/`verify_device` to `cpu` in Settings if you don't
-have one (the render step's encoder isn't currently configurable, so it
-still needs NVENC either way).
+An NVIDIA GPU + driver is recommended - for the default (CUDA) Whisper
+transcription and for NVENC, the fastest video encoder when rendering -
+but not strictly required any more: switch `whisper_device`/`verify_device`
+to `cpu` in Settings for transcription, and **Render encoder** to
+**CPU / Software** on the Video Style tab for rendering. Software encoding
+is much slower than NVENC, but it means the app can run on any Windows
+machine, GPU or not.
+
+Rendering also auto-detects NVENC at render time and falls back to CPU
+encoding on its own if NVENC is requested but doesn't actually work (a
+missing GPU, or a driver too old for the NVENC API version ffmpeg wants) -
+with a clear one-time notice when that happens, so a fallback never looks
+like an unexplained slowdown.
 
 Settings live in `%APPDATA%\OBS AI Highlights\` (`highlight_config.json` +
 `.env` for the OBS password) - separate from wherever the app itself is
