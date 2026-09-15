@@ -153,6 +153,7 @@ class MainApp:
         self.update_queue = queue.Queue()
         self.download_queue = queue.Queue()
         self.clip_render_queue = queue.Queue()
+        self.clip_thumbnail_queue = queue.Queue()
         self._encoder_fallback_notice_shown = False
         self._latest_release_url = None
         self._latest_asset_url = None
@@ -182,6 +183,7 @@ class MainApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_log_queue()
         self._poll_clip_render_queue()
+        self._poll_clip_thumbnail_queue()
         self._check_for_updates()
 
         # See _apply_theme_to_text_widgets()'s own docstring for why this
@@ -552,6 +554,44 @@ class MainApp:
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 8))
 
+        preview_row = ttk.Frame(parent)
+        preview_row.pack(fill="x", pady=(0, 8))
+
+        self.clip_thumbnail_label = ttk.Label(preview_row)
+        self.clip_thumbnail_label.pack(side="left", padx=(0, 16))
+
+        trim_frame = ttk.Frame(preview_row)
+        trim_frame.pack(side="left", fill="y")
+
+        ttk.Label(trim_frame, text="Trim (seconds):").pack(anchor="w")
+
+        trim_fields_row = ttk.Frame(trim_frame)
+        trim_fields_row.pack(anchor="w", pady=(2, 4))
+
+        ttk.Label(trim_fields_row, text="Start:").pack(side="left")
+        self.clip_trim_start_var = tk.StringVar()
+        ttk.Entry(trim_fields_row, textvariable=self.clip_trim_start_var, width=8).pack(
+            side="left", padx=(4, 10)
+        )
+
+        ttk.Label(trim_fields_row, text="End:").pack(side="left")
+        self.clip_trim_end_var = tk.StringVar()
+        ttk.Entry(trim_fields_row, textvariable=self.clip_trim_end_var, width=8).pack(
+            side="left", padx=(4, 0)
+        )
+
+        self.clip_save_trim_button = ttk.Button(
+            trim_frame, text="Save Trim", command=self._save_clip_trim, state="disabled"
+        )
+        self.clip_save_trim_button.pack(anchor="w")
+
+        ttk.Label(
+            trim_frame,
+            text="Overrides the auto-detected trim on a Verified/Review clip - re-render to see it.",
+            wraplength=360,
+            foreground="#888888",
+        ).pack(anchor="w", pady=(4, 0))
+
         self.clip_detail_text = tk.Text(
             parent,
             height=14,
@@ -562,6 +602,8 @@ class MainApp:
         self.clip_detail_text.pack(fill="both", expand=True)
 
         self._clip_by_iid = {}
+        self._current_thumbnail_image = None
+        self._clip_thumbnail_request_id = 0
         self._refresh_clips_list()
 
     def _sort_clips_by(self, column):
@@ -626,13 +668,18 @@ class MainApp:
             return
 
         if len(base_names) == 1:
-            self._show_clip_detail(clip_manager.get_clip(base_names[0]))
+            clip = clip_manager.get_clip(base_names[0])
+            self._show_clip_detail(clip)
+            self._load_clip_trim_fields(clip)
+            self._load_clip_thumbnail_async(base_names[0])
             return
 
         self.clip_detail_text.configure(state="normal")
         self.clip_detail_text.delete("1.0", "end")
         self.clip_detail_text.insert("1.0", f"{len(base_names)} clips selected.")
         self.clip_detail_text.configure(state="disabled")
+        self._clear_clip_trim_fields()
+        self._clear_clip_thumbnail()
 
     def _show_clip_detail(self, clip):
         lines = []
@@ -664,6 +711,104 @@ class MainApp:
         self.clip_detail_text.configure(state="normal")
         self.clip_detail_text.delete("1.0", "end")
         self.clip_detail_text.configure(state="disabled")
+        self._clear_clip_trim_fields()
+        self._clear_clip_thumbnail()
+
+    def _load_clip_trim_fields(self, clip):
+        trim_start = clip.get("trim_start")
+        trim_end = clip.get("trim_end")
+
+        if trim_start is None or trim_end is None:
+            self._clear_clip_trim_fields()
+            return
+
+        self.clip_trim_start_var.set(f"{trim_start:.2f}")
+        self.clip_trim_end_var.set(f"{trim_end:.2f}")
+        self.clip_save_trim_button.configure(state="normal")
+
+    def _clear_clip_trim_fields(self):
+        self.clip_trim_start_var.set("")
+        self.clip_trim_end_var.set("")
+        self.clip_save_trim_button.configure(state="disabled")
+
+    def _save_clip_trim(self):
+        base_names = self._selected_clip_base_names()
+        if len(base_names) != 1:
+            return
+
+        base_name = base_names[0]
+
+        ok, message = clip_manager.update_trim(
+            base_name, self.clip_trim_start_var.get(), self.clip_trim_end_var.get()
+        )
+
+        if not ok:
+            messagebox.showerror("Save Trim", message)
+            return
+
+        self._refresh_clips_list()
+
+        # selection_set() alone isn't enough here - <<TreeviewSelect>> can
+        # fire on a later pass through the event loop rather than inline,
+        # so the just-rebuilt row would briefly show as selected with a
+        # stale (cleared) detail panel. Calling the handler directly
+        # keeps this deterministic regardless of that timing.
+        for iid, base in self._clip_by_iid.items():
+            if base == base_name:
+                self.clips_tree.selection_set(iid)
+                self._on_clip_selected()
+                break
+
+    def _load_clip_thumbnail_async(self, base_name):
+        self._clip_thumbnail_request_id += 1
+        request_id = self._clip_thumbnail_request_id
+
+        self.clip_thumbnail_label.configure(image="")
+        self._current_thumbnail_image = None
+
+        threading.Thread(
+            target=self._clip_thumbnail_worker, args=(base_name, request_id), daemon=True
+        ).start()
+
+    def _clip_thumbnail_worker(self, base_name, request_id):
+        try:
+            thumbnail_path = clip_manager.get_thumbnail(base_name)
+        except Exception:
+            thumbnail_path = None
+
+        self.clip_thumbnail_queue.put((request_id, thumbnail_path))
+
+    def _poll_clip_thumbnail_queue(self):
+        try:
+            while True:
+                request_id, thumbnail_path = self.clip_thumbnail_queue.get_nowait()
+
+                # Stale result from a clip the user already clicked away
+                # from while this was generating - discard it rather
+                # than showing the wrong thumbnail under the wrong clip.
+                if request_id != self._clip_thumbnail_request_id:
+                    continue
+
+                if thumbnail_path:
+                    try:
+                        image = tk.PhotoImage(file=str(thumbnail_path))
+                        self._current_thumbnail_image = image
+                        self.clip_thumbnail_label.configure(image=image)
+                        continue
+                    except Exception:
+                        pass
+
+                self.clip_thumbnail_label.configure(image="")
+                self._current_thumbnail_image = None
+        except queue.Empty:
+            pass
+
+        self.root.after(150, self._poll_clip_thumbnail_queue)
+
+    def _clear_clip_thumbnail(self):
+        self._clip_thumbnail_request_id += 1
+        self.clip_thumbnail_label.configure(image="")
+        self._current_thumbnail_image = None
 
     def _play_selected_clip(self):
         base_names = self._selected_clip_base_names()

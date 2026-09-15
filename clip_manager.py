@@ -21,6 +21,7 @@ of needing a subprocess worker the way Capture/Verify/Render-all do.
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import config as app_config
@@ -35,6 +36,9 @@ TRANSCRIPT_FOLDER = SHORTS_ROOT / "Transcripts"
 VERIFIED_FOLDER = SHORTS_ROOT / "Verified"
 REVIEW_FOLDER = SHORTS_ROOT / "Review"
 READY_FOLDER = SHORTS_ROOT / "Ready"
+THUMBNAIL_FOLDER = SHORTS_ROOT / ".thumbnails"
+
+THUMBNAIL_WIDTH = 220
 
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov", ".m4v", ".ts")
 
@@ -176,6 +180,8 @@ def get_clip(base_name, raw_video=None):
         "score": _score_from_filename(raw_video) if raw_video else None,
         "status": status,
         "duration": duration,
+        "trim_start": (metadata or {}).get("trim_start"),
+        "trim_end": (metadata or {}).get("trim_end"),
         "reasons": candidate_data.get("reasons", []),
         "transcript": transcript,
         "rendered": rendered,
@@ -199,6 +205,72 @@ def list_clips():
     clips.sort(key=lambda clip: clip["base_name"], reverse=True)
 
     return clips
+
+
+def _extract_frame(source_path, seek_seconds, thumbnail_path):
+    command = [
+        render_clips.FFMPEG_EXECUTABLE,
+        "-y",
+        "-ss", f"{max(seek_seconds, 0.0):.3f}",
+        "-i", str(source_path),
+        "-frames:v", "1",
+        "-vf", f"scale={THUMBNAIL_WIDTH}:-1",
+        str(thumbnail_path),
+    ]
+
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=15)
+    except Exception:
+        return False
+
+    return result.returncode == 0 and thumbnail_path.exists()
+
+
+def get_thumbnail(base_name, force=False):
+    """A small PNG preview frame for this clip, generated via ffmpeg and
+    cached in THUMBNAIL_FOLDER - the rendered Short if there is one
+    (most representative of the actual output), otherwise the raw
+    source clip. Regenerates automatically if the source file is newer
+    than the cached thumbnail (e.g. after a re-render or a trim edit),
+    not just once ever. Returns None if there's nothing to generate a
+    thumbnail from, or if ffmpeg fails - never raises, since this is
+    best-effort display data, not something that should break the tab."""
+    clip = get_clip(base_name)
+
+    if clip["rendered_path"]:
+        source_path = Path(clip["rendered_path"])
+        seek_seconds = 1.0
+    elif clip["raw_video"]:
+        source_path = Path(clip["raw_video"])
+        trim_start = clip["trim_start"]
+        seek_seconds = (trim_start if trim_start is not None else 0.0) + 1.0
+    else:
+        return None
+
+    if not source_path.exists():
+        return None
+
+    thumbnail_path = THUMBNAIL_FOLDER / (base_name + ".png")
+
+    if (
+        not force
+        and thumbnail_path.exists()
+        and thumbnail_path.stat().st_mtime >= source_path.stat().st_mtime
+    ):
+        return thumbnail_path
+
+    THUMBNAIL_FOLDER.mkdir(parents=True, exist_ok=True)
+
+    if _extract_frame(source_path, seek_seconds, thumbnail_path):
+        return thumbnail_path
+
+    # A short clip (or a seek point past its own end) can leave nothing
+    # to extract at the offset above - fall back to the very first frame
+    # rather than showing nothing at all.
+    if seek_seconds > 0 and _extract_frame(source_path, 0.0, thumbnail_path):
+        return thumbnail_path
+
+    return None
 
 
 def play_clip(base_name):
@@ -270,6 +342,50 @@ def reject_clip(base_name):
     return False, "No Verified/Review record found for this clip."
 
 
+def update_trim(base_name, trim_start, trim_end):
+    """Overrides a clip's own trim points - for fixing an auto-detected
+    trim that cut off a word or left in too much dead air, without
+    needing to hand-edit the JSON file. Only meaningful for a clip
+    that's already been verified (has trim data to override at all);
+    the raw video itself is never touched, so this stays cheap and
+    re-render-friendly - Render picks up the new points immediately."""
+    for folder in (VERIFIED_FOLDER, REVIEW_FOLDER):
+        json_path = folder / (base_name + ".json")
+
+        if not json_path.exists():
+            continue
+
+        metadata = _read_json(json_path) or {}
+
+        if metadata.get("trim_start") is None or metadata.get("trim_end") is None:
+            return False, "This clip has no existing trim data to override."
+
+        try:
+            trim_start = float(trim_start)
+            trim_end = float(trim_end)
+        except (TypeError, ValueError):
+            return False, "Start and end must be numbers."
+
+        if trim_start < 0:
+            return False, "Start can't be negative."
+
+        if trim_end <= trim_start:
+            return False, "End must be after start."
+
+        metadata["trim_start"] = trim_start
+        metadata["trim_end"] = trim_end
+        metadata["final_duration"] = trim_end - trim_start
+
+        json_path.write_text(
+            json.dumps(metadata, indent=4, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        return True, "Trim updated."
+
+    return False, "No Verified/Review record found for this clip."
+
+
 def render_clip(base_name):
     """Renders one specific clip right now. Reuses render_clips.py's own
     render_job() so the result is byte-identical to a normal batch render
@@ -337,7 +453,14 @@ def delete_clip(base_name):
     alternative for "this clip isn't good enough"."""
     removed_any = False
 
-    for folder in (RAW_FOLDER, TRANSCRIPT_FOLDER, VERIFIED_FOLDER, REVIEW_FOLDER, READY_FOLDER):
+    for folder in (
+        RAW_FOLDER,
+        TRANSCRIPT_FOLDER,
+        VERIFIED_FOLDER,
+        REVIEW_FOLDER,
+        READY_FOLDER,
+        THUMBNAIL_FOLDER,
+    ):
         for path in _related_files(folder, base_name):
             path.unlink()
             removed_any = True

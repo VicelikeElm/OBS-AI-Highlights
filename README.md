@@ -65,7 +65,10 @@ Highlights** from the Start Menu. One window, five tabs:
   waiting for the next batch, or Delete a clip you don't want outright.
   Ctrl+click/Shift+click to select several clips and approve, reject,
   render, or delete them all at once. Filter by status and click a
-  column header to sort.
+  column header to sort. Selecting a clip shows a preview thumbnail and
+  its trim points - override the start/end time directly if the
+  auto-detected trim cut off a word or left in too much dead air, then
+  re-render to see it.
 - **Sessions** — every capture run is tracked as a session: how many
   moments were analyzed, how many were ignored/possible/saved, the
   average score, and which phrases were actually most responsible for
