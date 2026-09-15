@@ -203,7 +203,49 @@ class SettingsUI:
             command=self._save,
         ).pack(side="right")
 
+    def _make_scrollable(self, parent):
+        """Wraps a tab's content in a vertically scrollable area and
+        returns the inner frame to build that tab's widgets into instead
+        of `parent` directly - some tabs (Video Style especially, with
+        layout/encoder/caption-style controls and a preview all stacked
+        in one place) can end up taller than the window, particularly
+        when Settings is embedded in the smaller main app window rather
+        than run standalone. Every existing `ttk.Widget(parent, ...)`
+        call in a tab-builder keeps working unchanged - only the value
+        `parent` is bound to changes."""
+        canvas = tk.Canvas(parent, highlightthickness=0, borderwidth=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Only a right-side gap before the scrollbar - the tab frame
+        # itself already carries padding=12 on every side (set where
+        # each tab is created), which still applies around the canvas.
+        inner = ttk.Frame(canvas, padding=(0, 0, 12, 0))
+        inner_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _update_scroll_region(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _resize_inner_to_canvas(event):
+            canvas.itemconfigure(inner_window, width=event.width)
+
+        inner.bind("<Configure>", _update_scroll_region)
+        canvas.bind("<Configure>", _resize_inner_to_canvas)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+
+        return inner
+
     def _build_preset_tab(self, parent):
+        parent = self._make_scrollable(parent)
+
         top_row = ttk.Frame(parent)
         top_row.pack(fill="x", pady=(0, 6))
 
@@ -400,6 +442,8 @@ class SettingsUI:
         )
 
     def _build_caption_style_tab(self, parent):
+        parent = self._make_scrollable(parent)
+
         render_row = ttk.Frame(parent)
         render_row.pack(fill="x", pady=(0, 4))
 
@@ -704,6 +748,8 @@ class SettingsUI:
         )
 
     def _build_scene_rules_tab(self, parent):
+        parent = self._make_scrollable(parent)
+
         ttk.Label(
             parent,
             text=(
