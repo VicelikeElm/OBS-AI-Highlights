@@ -44,9 +44,10 @@ Highlights** from the Start Menu. One window, three tabs:
   Render checkboxes controlling what happens automatically once a
   capture ends, plus manual Verify Clips/Render Clips buttons and a live
   log of what's happening.
-- **Settings** — pick a preset, tune caption styling, set your OBS
-  connection details and password, and point it at your recording/output
-  folders.
+- **Settings** — pick a preset, tune caption/render styling, set your OBS
+  connection details and password, point it at your recording/output
+  folders, and set up Scene Rules (e.g. a "BRB" scene pauses clipping, a
+  "Gameplay" scene switches to the Gaming preset automatically).
 - **Updates** — checks automatically on launch, or on demand, and can
   download and install a newer version without leaving the app.
 

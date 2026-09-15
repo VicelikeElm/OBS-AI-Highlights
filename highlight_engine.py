@@ -54,6 +54,12 @@ AUTO_RENDER = bool(CONFIG.get("auto_render", True))
 REMOTE_API_ENABLED = bool(CONFIG.get("remote_api_enabled", True))
 REMOTE_API_PORT = int(CONFIG.get("remote_api_port", 8756))
 
+# Each rule: {"match": "<substring>", "action": "pause" | "ignore" | "preset",
+# "preset": "<preset key, only for action=preset>"}. Matching is a
+# case-insensitive substring check against OBS's current program scene
+# name - see evaluate_scene_rules() below.
+SCENE_RULES = CONFIG.get("scene_rules", [])
+
 
 # =========================================================
 # ENVIRONMENT
@@ -191,6 +197,28 @@ def apply_preset(name):
     WHISPER_INITIAL_PROMPT = new_preset["whisper_initial_prompt"]
 
     return new_preset["label"]
+
+
+def evaluate_scene_rules(scene_name, rules):
+    """Returns the first rule whose "match" text appears in scene_name
+    (case-insensitive substring), or None if nothing matches. Only ever
+    reads config-derived data - can't raise, so it's always safe to call
+    from inside the live loop."""
+    if not scene_name:
+        return None
+
+    scene_name_lower = scene_name.lower()
+
+    for rule in rules:
+
+        match_text = str(
+            rule.get("match", "")
+        ).strip()
+
+        if match_text and match_text.lower() in scene_name_lower:
+            return rule
+
+    return None
 
 
 # =========================================================
@@ -501,11 +529,34 @@ def read_obs_status(client):
             )
         )
 
+        scene_name = ""
+
+        try:
+
+            scene_status = (
+                client.get_current_program_scene()
+            )
+
+            scene_name = str(
+                getattr(
+                    scene_status,
+                    "scene_name",
+                    ""
+                )
+            )
+
+        except Exception:
+
+            # Scene lookup is a nice-to-have signal, not a required one -
+            # never let it take down the rest of the status check.
+            pass
+
         return {
             "connected": True,
             "streaming": streaming,
             "recording": recording,
             "replay": replay,
+            "scene_name": scene_name,
         }
 
     except Exception:
@@ -515,6 +566,7 @@ def read_obs_status(client):
             "streaming": False,
             "recording": False,
             "replay": False,
+            "scene_name": "",
         }
 
 
@@ -1452,6 +1504,9 @@ def run_live_sermon(
 
     in_prayer = False
 
+    scene_rule_action = None
+    last_scene_preset_applied = None
+
     session_running = True
 
     try:
@@ -1528,6 +1583,47 @@ def run_live_sermon(
                     or
                     auto_started_replay
                 )
+
+            # ---------------------------------------------
+            # SCENE RULES
+            # ---------------------------------------------
+
+            scene_rule = evaluate_scene_rules(
+                status.get(
+                    "scene_name",
+                    ""
+                ),
+                SCENE_RULES,
+            )
+
+            scene_rule_action = (
+                scene_rule["action"]
+                if scene_rule
+                else None
+            )
+
+            if scene_rule_action == "preset":
+
+                requested_scene_preset = scene_rule.get(
+                    "preset"
+                )
+
+                if (
+                    requested_scene_preset
+                    and requested_scene_preset != last_scene_preset_applied
+                ):
+
+                    new_label = apply_preset(
+                        requested_scene_preset
+                    )
+
+                    last_scene_preset_applied = requested_scene_preset
+
+                    log()
+                    log(
+                        f"Preset switched via scene rule "
+                        f"('{status.get('scene_name', '')}'): {new_label}"
+                    )
 
             # ---------------------------------------------
             # REMOTE CONTROL: preset switch / manual highlight
@@ -1806,6 +1902,22 @@ def run_live_sermon(
                 )
 
                 # -----------------------------------------
+                # SCENE RULE: IGNORE
+                # -----------------------------------------
+
+                # A scene like "Starting Soon" should never let this
+                # chunk contribute to a scored thought - unlike pause
+                # (checked later, near the save decision), this clears
+                # any in-progress thought so nothing from before the
+                # ignored scene bleeds into content scored afterward.
+                if scene_rule_action == "ignore":
+
+                    thought_parts = []
+                    thought_start_time = None
+
+                    continue
+
+                # -----------------------------------------
                 # PRAYER MODE
                 # -----------------------------------------
 
@@ -1941,13 +2053,21 @@ def run_live_sermon(
                 )
 
             # ---------------------------------------------
-            # REMOTE PAUSE
+            # REMOTE / SCENE-RULE PAUSE
             # ---------------------------------------------
 
             if remote_state is not None and remote_state.is_paused():
 
                 log(
                     "Status: paused (remote pause active) - not saving."
+                )
+
+                continue
+
+            if scene_rule_action == "pause":
+
+                log(
+                    "Status: paused (scene rule) - not saving."
                 )
 
                 continue

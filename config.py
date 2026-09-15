@@ -87,6 +87,7 @@ DEFAULTS = {
     "remote_api_enabled": True,
     "remote_api_port": 8756,
     "render_style": "blurred_background",
+    "scene_rules": [],
 }
 
 

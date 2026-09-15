@@ -80,6 +80,13 @@ COMPUTE_TYPE_OPTIONS = (
     "int8_bfloat16",
 )
 
+SCENE_ACTION_LABELS = {
+    "pause": "Pause clipping",
+    "ignore": "Ignore entirely",
+    "preset": "Switch preset",
+}
+SCENE_ACTION_KEY_BY_LABEL = {v: k for k, v in SCENE_ACTION_LABELS.items()}
+
 PHRASE_LIST_FIELDS = (
     ("strong_phrases", "Strong phrases (one per line)"),
     ("application_phrases", "Application / call-to-action phrases"),
@@ -158,18 +165,21 @@ class SettingsUI:
         connection_tab = ttk.Frame(notebook, padding=12)
         model_tab = ttk.Frame(notebook, padding=12)
         caption_tab = ttk.Frame(notebook, padding=12)
+        scene_rules_tab = ttk.Frame(notebook, padding=12)
         about_tab = ttk.Frame(notebook, padding=12)
 
         notebook.add(preset_tab, text="Preset & Phrases")
         notebook.add(connection_tab, text="OBS & Folders")
         notebook.add(model_tab, text="Whisper & Thresholds")
         notebook.add(caption_tab, text="Video Style")
+        notebook.add(scene_rules_tab, text="Scene Rules")
         notebook.add(about_tab, text="About")
 
         self._build_preset_tab(preset_tab)
         self._build_connection_tab(connection_tab)
         self._build_model_tab(model_tab)
         self._build_caption_style_tab(caption_tab)
+        self._build_scene_rules_tab(scene_rules_tab)
         self._build_about_tab(about_tab)
 
         button_row = ttk.Frame(outer, padding=(0, 12, 0, 0))
@@ -585,6 +595,115 @@ class SettingsUI:
             font=font_spec,
         )
 
+    def _build_scene_rules_tab(self, parent):
+        ttk.Label(
+            parent,
+            text=(
+                "Automatically pause clipping, ignore a scene entirely, or switch preset "
+                "based on OBS's current scene name (checked while Highlight Capture is running)."
+            ),
+            wraplength=680,
+        ).pack(anchor="w", pady=(0, 10))
+
+        self.scene_rules_container = ttk.Frame(parent)
+        self.scene_rules_container.pack(fill="both", expand=True)
+
+        self.scene_rule_rows = []
+
+        button_row = ttk.Frame(parent)
+        button_row.pack(fill="x", pady=(10, 0))
+
+        ttk.Button(button_row, text="+ Add Rule", command=self._add_scene_rule_row).pack(side="left")
+        ttk.Button(button_row, text="Save", command=self._save).pack(side="right")
+
+    def _preset_labels_for_rules(self):
+        return list(self._preset_key_by_label.keys())
+
+    def _label_for_preset_key(self, key):
+        for label, candidate_key in self._preset_key_by_label.items():
+            if candidate_key == key:
+                return label
+        return ""
+
+    def _add_scene_rule_row(self, match="", action_key="pause", preset_key=""):
+        row = ttk.Frame(self.scene_rules_container)
+        row.pack(fill="x", pady=3)
+
+        ttk.Label(row, text="Scene contains:").pack(side="left")
+        match_var = tk.StringVar(value=match)
+        ttk.Entry(row, textvariable=match_var, width=18).pack(side="left", padx=(4, 12))
+
+        ttk.Label(row, text="Action:").pack(side="left")
+        action_var = tk.StringVar(value=SCENE_ACTION_LABELS.get(action_key, SCENE_ACTION_LABELS["pause"]))
+        ttk.Combobox(
+            row,
+            textvariable=action_var,
+            values=list(SCENE_ACTION_LABELS.values()),
+            state="readonly",
+            width=16,
+        ).pack(side="left", padx=(4, 12))
+
+        ttk.Label(row, text="Preset:").pack(side="left")
+        preset_var = tk.StringVar(value=self._label_for_preset_key(preset_key))
+        preset_combo = ttk.Combobox(
+            row,
+            textvariable=preset_var,
+            values=self._preset_labels_for_rules(),
+            state="readonly",
+            width=18,
+        )
+        preset_combo.pack(side="left", padx=(4, 12))
+
+        row_data = {
+            "frame": row,
+            "match_var": match_var,
+            "action_var": action_var,
+            "preset_var": preset_var,
+            "preset_combo": preset_combo,
+        }
+
+        ttk.Button(
+            row, text="Remove", command=lambda: self._remove_scene_rule_row(row_data)
+        ).pack(side="left")
+
+        self.scene_rule_rows.append(row_data)
+        return row_data
+
+    def _remove_scene_rule_row(self, row_data):
+        row_data["frame"].destroy()
+        self.scene_rule_rows.remove(row_data)
+
+    def _load_scene_rules(self, rules):
+        for row_data in list(self.scene_rule_rows):
+            self._remove_scene_rule_row(row_data)
+
+        for rule in rules:
+            self._add_scene_rule_row(
+                match=rule.get("match", ""),
+                action_key=rule.get("action", "pause"),
+                preset_key=rule.get("preset", ""),
+            )
+
+    def _collect_scene_rules(self):
+        rules = []
+
+        for row_data in self.scene_rule_rows:
+            match_text = row_data["match_var"].get().strip()
+            if not match_text:
+                continue
+
+            action_key = SCENE_ACTION_KEY_BY_LABEL.get(row_data["action_var"].get(), "pause")
+            rule = {"match": match_text, "action": action_key}
+
+            if action_key == "preset":
+                preset_key = self._preset_key_by_label.get(row_data["preset_var"].get())
+                if preset_key:
+                    rule["preset"] = preset_key
+
+            rules.append(rule)
+
+        return rules
+
     def _build_about_tab(self, parent):
         content = ttk.Frame(parent)
         content.place(relx=0.5, rely=0.5, anchor="center")
@@ -766,6 +885,8 @@ class SettingsUI:
         self._display_caption_style(active_caption_key)
         self._update_caption_preview()
 
+        self._load_scene_rules(config.get("scene_rules", []))
+
     def _current_preset_key(self):
         return self._preset_key_by_label.get(self.preset_var.get(), presets.DEFAULT_PRESET)
 
@@ -816,6 +937,13 @@ class SettingsUI:
             self._preset_key_by_label[name] = presets.make_custom_key(name)
 
         self.preset_combo.configure(values=list(self._preset_key_by_label.keys()))
+
+        # Scene rule rows (Scene Rules tab) each carry their own preset
+        # dropdown, built before this refresh could have known about a
+        # profile created afterward (New/Duplicate/Import) - keep them
+        # in sync too, without disturbing whatever's already selected.
+        for row_data in getattr(self, "scene_rule_rows", []):
+            row_data["preset_combo"].configure(values=self._preset_labels_for_rules())
 
     def _select_profile_by_key(self, key):
         for label, candidate_key in self._preset_key_by_label.items():
@@ -1018,6 +1146,8 @@ class SettingsUI:
         config["caption_style"] = caption_style_key
         if caption_style_key == "custom":
             config["custom_caption_style"] = caption_style_fields
+
+        config["scene_rules"] = self._collect_scene_rules()
 
         for field, label in (
             ("recording_folder", "Recording folder"),
