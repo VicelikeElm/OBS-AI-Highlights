@@ -43,12 +43,18 @@ Each stage can run on its own, or all three from one app - see below.
 ## Easy install (Windows)
 
 Run the installer (`OBSAIHighlights-Setup-vX.Y.Z.exe`) and launch **OBS AI
-Highlights** from the Start Menu. One window, four tabs:
+Highlights** from the Start Menu. One window, five tabs:
 
 - **Run** — start/stop live highlight capture, with Auto Verify/Auto
   Render checkboxes controlling what happens automatically once a
   capture ends, plus manual Verify Clips/Render Clips buttons and a live
   log of what's happening.
+- **Clips** — every detected clip in one list, across every pipeline
+  stage, with its score, status, duration, and detection reasons/full
+  transcript. Play a clip in your default video player, Approve or
+  Reject a Review clip (non-destructive - nothing is deleted, so a
+  reject is easy to undo), Render a Verified one right now instead of
+  waiting for the next batch, or Delete a clip you don't want outright.
 - **Sessions** — every capture run is tracked as a session: how many
   moments were analyzed, how many were ignored/possible/saved, the
   average score, and which phrases were actually most responsible for

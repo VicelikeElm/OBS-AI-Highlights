@@ -39,6 +39,7 @@ except Exception:
     psutil = None
 
 import config as app_config
+import clip_manager
 import session_stats
 from settings_ui import SettingsUI
 from version import APP_VERSION, GITHUB_REPO
@@ -143,6 +144,7 @@ class MainApp:
         self.log_queue = queue.Queue()
         self.update_queue = queue.Queue()
         self.download_queue = queue.Queue()
+        self.clip_render_queue = queue.Queue()
         self._latest_release_url = None
         self._latest_asset_url = None
         self._latest_asset_size = None
@@ -151,22 +153,26 @@ class MainApp:
         notebook.pack(fill="both", expand=True, padx=12, pady=12)
 
         run_tab = ttk.Frame(notebook, padding=12)
+        clips_tab = ttk.Frame(notebook, padding=12)
         sessions_tab = ttk.Frame(notebook, padding=12)
         settings_tab = ttk.Frame(notebook, padding=12)
         updates_tab = ttk.Frame(notebook, padding=12)
 
         notebook.add(run_tab, text="Run")
+        notebook.add(clips_tab, text="Clips")
         notebook.add(sessions_tab, text="Sessions")
         notebook.add(settings_tab, text="Settings")
         notebook.add(updates_tab, text="Updates")
 
         self._build_run_tab(run_tab)
+        self._build_clips_tab(clips_tab)
         self._build_sessions_tab(sessions_tab)
         self.settings_ui = SettingsUI(settings_tab)
         self._build_updates_tab(updates_tab)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_log_queue()
+        self._poll_clip_render_queue()
         self._check_for_updates()
 
     # -----------------------------------------------------------
@@ -437,6 +443,235 @@ class MainApp:
 
         session_stats.delete_session(session_id)
         self._refresh_sessions_list()
+
+    def _build_clips_tab(self, parent):
+        ttk.Label(
+            parent,
+            text=(
+                "Every detected clip, across every pipeline stage - play it, approve or reject "
+                "a Review clip, render a Verified one on demand, or delete it outright."
+            ),
+            wraplength=680,
+        ).pack(anchor="w", pady=(0, 8))
+
+        list_frame = ttk.Frame(parent)
+        list_frame.pack(fill="both", expand=True)
+
+        columns = ("clip", "score", "status", "duration", "rendered")
+        self.clips_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
+        self.clips_tree.heading("clip", text="Clip")
+        self.clips_tree.heading("score", text="Score")
+        self.clips_tree.heading("status", text="Status")
+        self.clips_tree.heading("duration", text="Duration")
+        self.clips_tree.heading("rendered", text="Rendered")
+        self.clips_tree.column("clip", width=220)
+        self.clips_tree.column("score", width=60, anchor="center")
+        self.clips_tree.column("status", width=90, anchor="center")
+        self.clips_tree.column("duration", width=80, anchor="center")
+        self.clips_tree.column("rendered", width=80, anchor="center")
+        self.clips_tree.pack(side="left", fill="both", expand=True)
+
+        tree_scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.clips_tree.yview)
+        self.clips_tree.configure(yscrollcommand=tree_scrollbar.set)
+        tree_scrollbar.pack(side="left", fill="y")
+
+        self.clips_tree.bind("<<TreeviewSelect>>", lambda _e: self._on_clip_selected())
+
+        button_row = ttk.Frame(parent)
+        button_row.pack(fill="x", pady=(8, 8))
+
+        ttk.Button(button_row, text="Refresh", command=self._refresh_clips_list).pack(side="left")
+
+        self.clip_play_button = ttk.Button(button_row, text="Play", command=self._play_selected_clip)
+        self.clip_play_button.pack(side="left", padx=(6, 0))
+
+        self.clip_approve_button = ttk.Button(
+            button_row, text="Approve", command=self._approve_selected_clip
+        )
+        self.clip_approve_button.pack(side="left", padx=(6, 0))
+
+        self.clip_reject_button = ttk.Button(
+            button_row, text="Reject", command=self._reject_selected_clip
+        )
+        self.clip_reject_button.pack(side="left", padx=(6, 0))
+
+        self.clip_render_button = ttk.Button(
+            button_row, text="Render", command=self._render_selected_clip
+        )
+        self.clip_render_button.pack(side="left", padx=(6, 0))
+
+        self.clip_delete_button = ttk.Button(
+            button_row, text="Delete", command=self._delete_selected_clip
+        )
+        self.clip_delete_button.pack(side="left", padx=(6, 0))
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 8))
+
+        self.clip_detail_text = tk.Text(
+            parent,
+            height=14,
+            state="disabled",
+            wrap="word",
+            background="#111111",
+            foreground="#DDDDDD",
+        )
+        self.clip_detail_text.pack(fill="both", expand=True)
+
+        self._clip_by_iid = {}
+        self._refresh_clips_list()
+
+    def _refresh_clips_list(self):
+        for row in self.clips_tree.get_children():
+            self.clips_tree.delete(row)
+
+        self._clip_by_iid = {}
+
+        for clip in clip_manager.list_clips():
+            iid = self.clips_tree.insert(
+                "",
+                "end",
+                values=(
+                    clip_manager.format_clip_label(clip["base_name"]),
+                    clip["score"] if clip["score"] is not None else "",
+                    clip["status"],
+                    f"{clip['duration']:.1f}s" if clip["duration"] is not None else "",
+                    "Yes" if clip["rendered"] else "No",
+                ),
+            )
+            self._clip_by_iid[iid] = clip["base_name"]
+
+        self._clear_clip_detail()
+
+    def _selected_clip_base_name(self):
+        selection = self.clips_tree.selection()
+        if not selection:
+            return None
+        return self._clip_by_iid.get(selection[0])
+
+    def _on_clip_selected(self):
+        base_name = self._selected_clip_base_name()
+        if not base_name:
+            self._clear_clip_detail()
+            return
+
+        self._show_clip_detail(clip_manager.get_clip(base_name))
+
+    def _show_clip_detail(self, clip):
+        lines = []
+        lines.append(f"Clip: {clip_manager.format_clip_label(clip['base_name'])}")
+        lines.append(f"Status: {clip['status']}")
+        lines.append(f"Score: {clip['score'] if clip['score'] is not None else '(unknown)'}")
+        duration = clip["duration"]
+        lines.append(f"Duration: {f'{duration:.1f}s' if duration is not None else '(unknown)'}")
+        lines.append(f"Rendered: {'Yes' if clip['rendered'] else 'No'}")
+        lines.append("")
+
+        lines.append("Detection reasons:")
+        if clip["reasons"]:
+            for reason in clip["reasons"]:
+                lines.append(f"  - {reason}")
+        else:
+            lines.append("  (none recorded)")
+        lines.append("")
+
+        lines.append("Transcript:")
+        lines.append(clip["transcript"] or "(none)")
+
+        self.clip_detail_text.configure(state="normal")
+        self.clip_detail_text.delete("1.0", "end")
+        self.clip_detail_text.insert("1.0", "\n".join(lines))
+        self.clip_detail_text.configure(state="disabled")
+
+    def _clear_clip_detail(self):
+        self.clip_detail_text.configure(state="normal")
+        self.clip_detail_text.delete("1.0", "end")
+        self.clip_detail_text.configure(state="disabled")
+
+    def _play_selected_clip(self):
+        base_name = self._selected_clip_base_name()
+        if not base_name:
+            return
+
+        ok, message = clip_manager.play_clip(base_name)
+        if not ok:
+            messagebox.showerror("Play", message)
+
+    def _approve_selected_clip(self):
+        base_name = self._selected_clip_base_name()
+        if not base_name:
+            return
+
+        ok, message = clip_manager.approve_clip(base_name)
+        if not ok:
+            messagebox.showerror("Approve", message)
+        self._refresh_clips_list()
+
+    def _reject_selected_clip(self):
+        base_name = self._selected_clip_base_name()
+        if not base_name:
+            return
+
+        ok, message = clip_manager.reject_clip(base_name)
+        if not ok:
+            messagebox.showerror("Reject", message)
+        self._refresh_clips_list()
+
+    def _render_selected_clip(self):
+        base_name = self._selected_clip_base_name()
+        if not base_name:
+            return
+
+        self.clip_approve_button.configure(state="disabled")
+        self.clip_reject_button.configure(state="disabled")
+        self.clip_render_button.configure(state="disabled", text="Rendering...")
+        self.clip_delete_button.configure(state="disabled")
+
+        threading.Thread(target=self._render_clip_worker, args=(base_name,), daemon=True).start()
+
+    def _render_clip_worker(self, base_name):
+        try:
+            ok, message = clip_manager.render_clip(base_name)
+        except Exception as error:
+            ok, message = False, f"Unexpected error: {error}"
+
+        self.clip_render_queue.put((ok, message))
+
+    def _poll_clip_render_queue(self):
+        try:
+            while True:
+                ok, message = self.clip_render_queue.get_nowait()
+
+                self.clip_approve_button.configure(state="normal")
+                self.clip_reject_button.configure(state="normal")
+                self.clip_render_button.configure(state="normal", text="Render")
+                self.clip_delete_button.configure(state="normal")
+
+                if not ok:
+                    messagebox.showerror("Render", message)
+
+                self._refresh_clips_list()
+        except queue.Empty:
+            pass
+
+        self.root.after(100, self._poll_clip_render_queue)
+
+    def _delete_selected_clip(self):
+        base_name = self._selected_clip_base_name()
+        if not base_name:
+            return
+
+        if not messagebox.askyesno(
+            "Delete clip",
+            f"Permanently delete \"{clip_manager.format_clip_label(base_name)}\"?\n\n"
+            "This removes the raw video, its transcript, any Verified/Review record, "
+            "and a rendered Short if one exists. This cannot be undone.",
+        ):
+            return
+
+        ok, message = clip_manager.delete_clip(base_name)
+        if not ok:
+            messagebox.showerror("Delete", message)
+        self._refresh_clips_list()
 
     def _build_updates_tab(self, parent):
         ttk.Label(
