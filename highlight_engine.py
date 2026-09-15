@@ -9,11 +9,13 @@ import subprocess
 import logging
 import threading
 import queue
+import statistics
 from pathlib import Path
 from datetime import datetime
 
 import pyaudiowpatch as pyaudio
 import obsws_python as obs
+import numpy as np
 
 from faster_whisper import WhisperModel
 
@@ -59,6 +61,21 @@ REMOTE_API_PORT = int(CONFIG.get("remote_api_port", 8756))
 # case-insensitive substring check against OBS's current program scene
 # name - see evaluate_scene_rules() below.
 SCENE_RULES = CONFIG.get("scene_rules", [])
+
+# A "spike" is how many times louder a moment was than the recent
+# rolling baseline - not an absolute loudness, so it adapts to however
+# loud/quiet this particular stream normally is. See
+# compute_chunk_loudness() and the AUDIO EXCITEMENT section in
+# run_live_sermon() below.
+AUDIO_EXCITEMENT_ENABLED = bool(CONFIG.get("audio_excitement_enabled", True))
+AUDIO_EXCITEMENT_MODERATE_RATIO = float(CONFIG.get("audio_excitement_moderate_ratio", 1.6))
+AUDIO_EXCITEMENT_STRONG_RATIO = float(CONFIG.get("audio_excitement_strong_ratio", 2.5))
+AUDIO_EXCITEMENT_MODERATE_BONUS = int(CONFIG.get("audio_excitement_moderate_bonus", 10))
+AUDIO_EXCITEMENT_STRONG_BONUS = int(CONFIG.get("audio_excitement_strong_bonus", 18))
+
+# How many recent chunks (each CHUNK_SECONDS long) the rolling loudness
+# baseline is computed from.
+LOUDNESS_HISTORY_SIZE = 10
 
 
 # =========================================================
@@ -417,6 +434,26 @@ def read_stream_chunk(
         raise payload
 
     return payload
+
+
+def compute_chunk_loudness(frames):
+    """RMS loudness of a chunk of raw 16-bit PCM audio frames (the same
+    frames read from the loopback stream), normalized to roughly 0.0-1.0
+    against int16's max magnitude. No new dependency - numpy is already
+    bundled transitively via faster-whisper/ctranslate2."""
+    raw = b"".join(frames)
+
+    if not raw:
+        return 0.0
+
+    samples = np.frombuffer(raw, dtype=np.int16)
+
+    if samples.size == 0:
+        return 0.0
+
+    rms = np.sqrt(np.mean(samples.astype(np.float64) ** 2))
+
+    return float(rms / 32768.0)
 
 
 # =========================================================
@@ -1091,7 +1128,8 @@ def should_finish_thought(
 
 def score_sermon_moment(
     text,
-    duration
+    duration,
+    audio_excitement=0.0
 ):
 
     clean = text.strip()
@@ -1289,6 +1327,29 @@ def score_sermon_moment(
         reasons.append(
             "too little context"
         )
+
+    # Audio excitement - a sudden loudness spike (cheering, shouting,
+    # applause, laughter) relative to the recent rolling baseline. Comes
+    # after the "too little context" penalty above so a short-but-loud
+    # reaction (exactly the kind of clip this is meant to catch) can
+    # still clear the bar even at low word counts.
+    if AUDIO_EXCITEMENT_ENABLED:
+
+        if audio_excitement >= AUDIO_EXCITEMENT_STRONG_RATIO:
+
+            score += AUDIO_EXCITEMENT_STRONG_BONUS
+
+            reasons.append(
+                "audio excitement (loud reaction)"
+            )
+
+        elif audio_excitement >= AUDIO_EXCITEMENT_MODERATE_RATIO:
+
+            score += AUDIO_EXCITEMENT_MODERATE_BONUS
+
+            reasons.append(
+                "audio excitement (loudness spike)"
+            )
 
     score = max(
         0,
@@ -1506,6 +1567,9 @@ def run_live_sermon(
 
     scene_rule_action = None
     last_scene_preset_applied = None
+
+    loudness_history = []
+    thought_max_spike_ratio = 0.0
 
     session_running = True
 
@@ -1770,6 +1834,55 @@ def run_live_sermon(
                 continue
 
             # ---------------------------------------------
+            # AUDIO EXCITEMENT
+            # ---------------------------------------------
+
+            # Computed on every chunk (speech or silence) so the rolling
+            # baseline reflects this stream's actual ambient loudness,
+            # not just its speech. thought_max_spike_ratio tracks the
+            # loudest moment across whichever chunks end up making up
+            # the current thought - reset alongside thought_parts below.
+
+            chunk_loudness = compute_chunk_loudness(
+                frames
+            )
+
+            if loudness_history:
+
+                baseline_loudness = statistics.median(
+                    loudness_history
+                )
+
+            else:
+
+                baseline_loudness = 0.0
+
+            if baseline_loudness > 0.01:
+
+                spike_ratio = (
+                    chunk_loudness
+                    /
+                    baseline_loudness
+                )
+
+            else:
+
+                spike_ratio = 0.0
+
+            thought_max_spike_ratio = max(
+                thought_max_spike_ratio,
+                spike_ratio
+            )
+
+            loudness_history.append(
+                chunk_loudness
+            )
+
+            if len(loudness_history) > LOUDNESS_HISTORY_SIZE:
+
+                loudness_history.pop(0)
+
+            # ---------------------------------------------
             # TEMP AUDIO
             # ---------------------------------------------
 
@@ -1914,6 +2027,7 @@ def run_live_sermon(
 
                     thought_parts = []
                     thought_start_time = None
+                    thought_max_spike_ratio = 0.0
 
                     continue
 
@@ -1937,6 +2051,7 @@ def run_live_sermon(
 
                     thought_parts = []
                     thought_start_time = None
+                    thought_max_spike_ratio = 0.0
 
                     continue
 
@@ -1950,6 +2065,7 @@ def run_live_sermon(
 
                     thought_parts = []
                     thought_start_time = None
+                    thought_max_spike_ratio = 0.0
 
                     continue
 
@@ -2005,10 +2121,15 @@ def run_live_sermon(
                 CHUNK_SECONDS
             )
 
+            thought_excitement = (
+                thought_max_spike_ratio
+            )
+
             # Start fresh immediately
             thought_parts = []
             thought_start_time = None
             silence_chunks = 0
+            thought_max_spike_ratio = 0.0
 
             if (
                 thought_duration
@@ -2022,6 +2143,7 @@ def run_live_sermon(
                 score_sermon_moment(
                     thought_text,
                     thought_duration,
+                    thought_excitement,
                 )
             )
 
@@ -2037,6 +2159,13 @@ def run_live_sermon(
             log(
                 f"Score: {score}"
             )
+
+            if thought_excitement > 1.0:
+
+                log(
+                    f"Audio excitement: "
+                    f"{thought_excitement:.1f}x baseline"
+                )
 
             log()
             log(thought_text)

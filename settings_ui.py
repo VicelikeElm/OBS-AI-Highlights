@@ -123,6 +123,11 @@ class SettingsUI:
         self.save_threshold_var = tk.StringVar()
         self.verified_similarity_var = tk.StringVar()
         self.verified_confidence_var = tk.StringVar()
+        self.audio_excitement_enabled_var = tk.BooleanVar()
+        self.audio_excitement_moderate_ratio_var = tk.StringVar()
+        self.audio_excitement_strong_ratio_var = tk.StringVar()
+        self.audio_excitement_moderate_bonus_var = tk.StringVar()
+        self.audio_excitement_strong_bonus_var = tk.StringVar()
         self.pause_end_pattern_var = tk.StringVar()
 
         self.render_style_var = tk.StringVar()
@@ -338,6 +343,18 @@ class SettingsUI:
             fmt="%.2f",
         )
 
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
+
+        self._add_labeled_checkbox(parent, "Audio excitement enabled", self.audio_excitement_enabled_var, label_width=36)
+        self._add_labeled_spinbox(
+            parent, "Moderate spike ratio (x baseline)", self.audio_excitement_moderate_ratio_var, 1.0, 5.0, 0.1, fmt="%.1f"
+        )
+        self._add_labeled_spinbox(
+            parent, "Strong spike ratio (x baseline)", self.audio_excitement_strong_ratio_var, 1.0, 5.0, 0.1, fmt="%.1f"
+        )
+        self._add_labeled_spinbox(parent, "Moderate spike bonus", self.audio_excitement_moderate_bonus_var, 0, 50, 1)
+        self._add_labeled_spinbox(parent, "Strong spike bonus", self.audio_excitement_strong_bonus_var, 0, 50, 1)
+
         ttk.Frame(parent).pack(fill="both", expand=True)
 
         ttk.Button(
@@ -366,7 +383,13 @@ class SettingsUI:
             "Verified similarity/confidence - how closely a clip's "
             "second, more accurate transcription has to match the "
             "original before it's marked Verified instead of sent to "
-            "Review.",
+            "Review.\n\n"
+            "Audio excitement - adds bonus points when a moment is "
+            "noticeably louder than the recent rolling average (a "
+            "loudness spike), catching cheering/shouting/reactions even "
+            "when nothing said matches a specific phrase. The ratio is "
+            "how many times louder than baseline counts as a spike; "
+            "the bonus is how many points that's worth.",
         )
 
     def _build_caption_style_tab(self, parent):
@@ -872,6 +895,11 @@ class SettingsUI:
         self.save_threshold_var.set(str(config.get("save_threshold", "")))
         self.verified_similarity_var.set(str(config.get("verified_similarity", "")))
         self.verified_confidence_var.set(str(config.get("verified_confidence", "")))
+        self.audio_excitement_enabled_var.set(bool(config.get("audio_excitement_enabled", True)))
+        self.audio_excitement_moderate_ratio_var.set(str(config.get("audio_excitement_moderate_ratio", 1.6)))
+        self.audio_excitement_strong_ratio_var.set(str(config.get("audio_excitement_strong_ratio", 2.5)))
+        self.audio_excitement_moderate_bonus_var.set(str(config.get("audio_excitement_moderate_bonus", 10)))
+        self.audio_excitement_strong_bonus_var.set(str(config.get("audio_excitement_strong_bonus", 18)))
 
         self._display_preset_phrases(active_key)
 
@@ -1121,6 +1149,7 @@ class SettingsUI:
         config["verify_compute_type"] = self.verify_compute_type_var.get().strip()
 
         config["remote_api_enabled"] = self.remote_api_enabled_var.get()
+        config["audio_excitement_enabled"] = self.audio_excitement_enabled_var.get()
 
         try:
             config["obs_port"] = int(self.obs_port_var.get().strip())
@@ -1130,6 +1159,10 @@ class SettingsUI:
             config["save_threshold"] = int(self.save_threshold_var.get().strip())
             config["verified_similarity"] = int(self.verified_similarity_var.get().strip())
             config["verified_confidence"] = float(self.verified_confidence_var.get().strip())
+            config["audio_excitement_moderate_ratio"] = float(self.audio_excitement_moderate_ratio_var.get().strip())
+            config["audio_excitement_strong_ratio"] = float(self.audio_excitement_strong_ratio_var.get().strip())
+            config["audio_excitement_moderate_bonus"] = int(self.audio_excitement_moderate_bonus_var.get().strip())
+            config["audio_excitement_strong_bonus"] = int(self.audio_excitement_strong_bonus_var.get().strip())
             caption_style_key = self._current_caption_style_key()
             caption_style_fields = self._collect_caption_style_fields()
         except ValueError as exc:
