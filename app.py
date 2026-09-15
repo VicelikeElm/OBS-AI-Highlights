@@ -552,7 +552,17 @@ class MainApp:
         )
         self.clip_delete_button.pack(side="left", padx=(6, 0))
 
-        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 8))
+        clip_separator = ttk.Separator(parent, orient="horizontal")
+        clip_separator.pack(fill="x", pady=(0, 8))
+
+        # Not packed here - shown/hidden around a render via pack()/
+        # pack_forget() in _render_selected_clip()/_poll_clip_render_queue().
+        # pack(before=clip_separator) keeps it anchored in this slot (just
+        # above the separator) every time it's re-shown, rather than
+        # jumping to the end of parent's pack order the way a bare
+        # pack() would on any call after the tab's initial layout.
+        self.clip_render_progress = ttk.Progressbar(parent, mode="indeterminate")
+        self._clip_render_progress_anchor = clip_separator
 
         preview_row = ttk.Frame(parent)
         preview_row.pack(fill="x", pady=(0, 8))
@@ -877,6 +887,11 @@ class MainApp:
         self.clip_render_button.configure(state="disabled", text="Rendering...")
         self.clip_delete_button.configure(state="disabled")
 
+        self.clip_render_progress.pack(
+            fill="x", pady=(0, 8), before=self._clip_render_progress_anchor
+        )
+        self.clip_render_progress.start(12)
+
         threading.Thread(target=self._render_clips_worker, args=(base_names,), daemon=True).start()
 
     def _render_clips_worker(self, base_names):
@@ -911,6 +926,9 @@ class MainApp:
                 self.clip_reject_button.configure(state="normal")
                 self.clip_render_button.configure(state="normal", text="Render")
                 self.clip_delete_button.configure(state="normal")
+
+                self.clip_render_progress.stop()
+                self.clip_render_progress.pack_forget()
 
                 self._report_bulk_result("Render", results)
                 self._notify_encoder_fallback_once()

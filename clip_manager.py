@@ -219,7 +219,12 @@ def _extract_frame(source_path, seek_seconds, thumbnail_path):
     ]
 
     try:
-        result = subprocess.run(command, capture_output=True, timeout=15)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
     except Exception:
         return False
 

@@ -1,4 +1,14 @@
 import os
+
+# ctranslate2's native file-opening code can fail to follow the NTFS
+# symlinks huggingface_hub's cache normally uses on Windows - "Unable
+# to open file 'model.bin'" even though the file is genuinely there and
+# readable by Python's own open(). Disabling symlinks makes the cache
+# use real file copies instead, avoiding that whole class of failure.
+# Must be set before faster_whisper (and the huggingface_hub it pulls
+# in) is imported below.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+
 import re
 import json
 import time

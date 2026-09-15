@@ -82,6 +82,7 @@ def _nvenc_available():
             ],
             capture_output=True,
             timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
         return result.returncode == 0
@@ -741,7 +742,8 @@ def render_job(job):
     print()
 
     result = subprocess.run(
-        command
+        command,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
     if result.returncode != 0:
