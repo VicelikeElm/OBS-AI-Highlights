@@ -67,14 +67,22 @@ def _nvenc_available():
     too old (a real failure mode hit repeatedly on this very machine
     during development: "Driver does not support the required nvenc
     API version"). Just listing encoders wouldn't catch that; only
-    actually trying one does."""
+    actually trying one does.
+
+    256x256 - not something smaller like 64x64 - because NVENC itself
+    refuses frames below its own minimum encode dimension ("Frame
+    Dimension less than the minimum supported value", confirmed on this
+    exact hardware to sit somewhere between 144x144 and 160x160): a
+    too-small probe frame produced the exact same failure result as a
+    genuinely unavailable/too-old driver, a false negative that wrongly
+    sent working NVENC hardware down the slower CPU fallback path."""
 
     try:
         result = subprocess.run(
             [
                 FFMPEG_EXECUTABLE,
                 "-f", "lavfi",
-                "-i", "color=c=black:s=64x64:d=0.1",
+                "-i", "color=c=black:s=256x256:d=0.1",
                 "-c:v", "h264_nvenc",
                 "-frames:v", "1",
                 "-f", "null",
