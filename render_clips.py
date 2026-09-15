@@ -4,6 +4,8 @@ import subprocess
 
 import caption_styles
 import config as app_config
+import presets
+import ready_metadata
 import render_styles
 
 
@@ -33,6 +35,26 @@ NVENC_PRESET = "p5"
 CQ = "20"
 
 AUDIO_BITRATE = "192k"
+
+
+# =========================================================
+# READY-TO-POST METADATA
+# =========================================================
+
+ACTIVE_PRESET = presets.get_preset(
+    CONFIG.get("preset", presets.DEFAULT_PRESET),
+    CONFIG.get("custom_profiles"),
+)
+
+# The same phrase lists driving detection are reused to find the
+# "strongest" sentence in a clip's own transcript - see ready_metadata.py.
+METADATA_PHRASE_LISTS = (
+    ACTIVE_PRESET["strong_phrases"],
+    ACTIVE_PRESET["application_phrases"],
+    ACTIVE_PRESET["reference_phrases"],
+)
+
+METADATA_HASHTAGS = ACTIVE_PRESET.get("hashtags", [])
 
 
 # =========================================================
@@ -296,9 +318,95 @@ def get_verified_jobs():
 
             "trim_end":
                 trim_end,
+
+            "transcript":
+                metadata.get("verified_matched_transcript")
+                or metadata.get("live_transcript", ""),
         })
 
     return jobs
+
+
+# =========================================================
+# READY-TO-POST METADATA
+# =========================================================
+
+def write_ready_metadata(job, base_name):
+    """Writes a small sidecar JSON + a human-readable .txt next to the
+    finished Short in READY_FOLDER - a suggested title, description,
+    hashtags, and the transcript's strongest quote. Deterministic/local
+    only (see ready_metadata.py) - never lets a metadata problem fail
+    the render itself, since the video is already done at this point."""
+
+    try:
+
+        metadata = ready_metadata.build_metadata(
+            job.get(
+                "transcript",
+                ""
+            ),
+            METADATA_PHRASE_LISTS,
+            METADATA_HASHTAGS,
+        )
+
+        json_path = (
+            READY_FOLDER
+            /
+            (base_name + "_SHORT_metadata.json")
+        )
+
+        with open(
+            json_path,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                metadata,
+                file,
+                indent=2,
+                ensure_ascii=False
+            )
+
+        text_path = (
+            READY_FOLDER
+            /
+            (base_name + "_SHORT_metadata.txt")
+        )
+
+        with open(
+            text_path,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            file.write(
+                f"Title: {metadata['title']}\n\n"
+            )
+
+            file.write(
+                f"Description: {metadata['description']}\n\n"
+            )
+
+            file.write(
+                f"Quote: {metadata['quote']}\n\n"
+            )
+
+            file.write(
+                "Hashtags: "
+                +
+                " ".join(
+                    metadata["hashtags"]
+                )
+                +
+                "\n"
+            )
+
+    except Exception as error:
+
+        print(
+            f"WARNING: Could not write ready-to-post metadata: {error}"
+        )
 
 
 # =========================================================
@@ -493,6 +601,11 @@ def render_job(job):
         )
 
         return False
+
+    write_ready_metadata(
+        job,
+        base_name
+    )
 
     size_mb = (
         output_path.stat().st_size

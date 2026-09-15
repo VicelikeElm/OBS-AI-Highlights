@@ -33,19 +33,28 @@ Built-in presets change what counts as a good clip:
    (and optionally a full-session SRT, if you have one), and sorts clips
    into `Verified` or `Review`.
 3. `render_clips.py` takes verified clips and renders them into a 1080x1920
-   vertical video with burned-in captions, ready to post.
+   vertical video with burned-in captions, ready to post. Alongside each
+   finished video it also writes a ready-to-post metadata sidecar - a
+   suggested title, description, hashtags, and the strongest transcript
+   quote - deterministically, with no cloud AI calls.
 
 Each stage can run on its own, or all three from one app - see below.
 
 ## Easy install (Windows)
 
 Run the installer (`OBSAIHighlights-Setup-vX.Y.Z.exe`) and launch **OBS AI
-Highlights** from the Start Menu. One window, three tabs:
+Highlights** from the Start Menu. One window, four tabs:
 
 - **Run** — start/stop live highlight capture, with Auto Verify/Auto
   Render checkboxes controlling what happens automatically once a
   capture ends, plus manual Verify Clips/Render Clips buttons and a live
   log of what's happening.
+- **Sessions** — every capture run is tracked as a session: how many
+  moments were analyzed, how many were ignored/possible/saved, the
+  average score, and which phrases were actually most responsible for
+  good (or rejected) clips - useful for tuning a preset against real
+  data instead of guessing. Rename or delete a session's stats record
+  from here (clip files themselves aren't touched).
 - **Settings** — pick a preset, tune caption/render styling, set your OBS
   connection details and password, point it at your recording/output
   folders, and set up Scene Rules (e.g. a "BRB" scene pauses clipping, a

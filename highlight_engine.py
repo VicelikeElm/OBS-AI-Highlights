@@ -24,6 +24,7 @@ import socket
 import config as app_config
 import presets
 import remote_api
+import session_stats
 
 
 # =========================================================
@@ -1013,14 +1014,20 @@ def count_phrase_hits(
     text,
     phrases
 ):
+    """Returns (count, matched_phrases) - matched_phrases lets the
+    session-stats layer track which specific phrases are actually
+    driving scores, for tuning presets against real data instead of
+    guessing."""
 
     lower = text.lower()
 
-    return sum(
-        1
+    matched = [
+        phrase
         for phrase in phrases
         if phrase in lower
-    )
+    ]
+
+    return len(matched), matched
 
 
 # =========================================================
@@ -1136,7 +1143,7 @@ def score_sermon_moment(
 
     if not clean:
 
-        return 0, []
+        return 0, [], [], []
 
     lower = clean.lower()
 
@@ -1146,6 +1153,7 @@ def score_sermon_moment(
 
     score = 0
     reasons = []
+    matched_phrases = []
 
     # Duration
     if 30 <= duration <= 55:
@@ -1189,7 +1197,7 @@ def score_sermon_moment(
         )
 
     # Strong sermon language
-    hits = count_phrase_hits(
+    hits, hit_phrases = count_phrase_hits(
         clean,
         STRONG_PHRASES
     )
@@ -1205,8 +1213,12 @@ def score_sermon_moment(
             f"{hits} strong sermon phrase(s)"
         )
 
+        matched_phrases.extend(
+            hit_phrases
+        )
+
     # Application
-    hits = count_phrase_hits(
+    hits, hit_phrases = count_phrase_hits(
         clean,
         APPLICATION_PHRASES
     )
@@ -1222,8 +1234,12 @@ def score_sermon_moment(
             f"{hits} application phrase(s)"
         )
 
+        matched_phrases.extend(
+            hit_phrases
+        )
+
     # Scripture
-    hits = count_phrase_hits(
+    hits, hit_phrases = count_phrase_hits(
         clean,
         SCRIPTURE_PHRASES
     )
@@ -1237,6 +1253,10 @@ def score_sermon_moment(
 
         reasons.append(
             "Scripture connection"
+        )
+
+        matched_phrases.extend(
+            hit_phrases
         )
 
     # Structure
@@ -1302,7 +1322,7 @@ def score_sermon_moment(
         )
 
     # Administrative material
-    admin_hits = count_phrase_hits(
+    admin_hits, admin_hit_phrases = count_phrase_hits(
         clean,
         ADMIN_PHRASES
     )
@@ -1359,7 +1379,7 @@ def score_sermon_moment(
         )
     )
 
-    return score, reasons
+    return score, reasons, matched_phrases, admin_hit_phrases
 
 
 # =========================================================
@@ -1419,8 +1439,8 @@ def save_triggered_clip(client, clip_number, score, thought_text, reasons, thoug
     decision came from the normal phrase-scoring path or a manual
     POST /highlight request via the remote API (see run_live_sermon()'s
     two call sites below). Returns (client, clip_number, last_save_time
-    or None, stop_session) - stop_session=True means the OBS connection
-    was lost and the caller should end its loop."""
+    or None, stop_session, clip_path or None) - stop_session=True means
+    the OBS connection was lost and the caller should end its loop."""
 
     log(
         f"Waiting "
@@ -1448,7 +1468,7 @@ def save_triggered_clip(client, clip_number, score, thought_text, reasons, thoug
             "OBS connection lost."
         )
 
-        return client, clip_number, None, True
+        return client, clip_number, None, True, None
 
     if replay_path is None:
 
@@ -1457,7 +1477,7 @@ def save_triggered_clip(client, clip_number, score, thought_text, reasons, thoug
             "not located."
         )
 
-        return client, clip_number, None, False
+        return client, clip_number, None, False, None
 
     clip_number += 1
 
@@ -1490,7 +1510,7 @@ def save_triggered_clip(client, clip_number, score, thought_text, reasons, thoug
         transcript_path
     )
 
-    return client, clip_number, time.time(), False
+    return client, clip_number, time.time(), False, str(clip_path)
 
 
 # =========================================================
@@ -1507,6 +1527,17 @@ def run_live_sermon(
     log("=" * 70)
     log("LIVE SERMON AI STARTING")
     log("=" * 70)
+
+    session_id = session_stats.start_session(
+        ACTIVE_PRESET.get(
+            "label",
+            ""
+        )
+    )
+
+    log(
+        f"Session: {session_id}"
+    )
 
     auto_started_replay = (
         ensure_replay_buffer(
@@ -1699,6 +1730,7 @@ def run_live_sermon(
                     capturing=True,
                     preset=ACTIVE_PRESET.get("label"),
                     clips_saved=clip_number,
+                    session_id=session_id,
                 )
 
                 requested_preset = (
@@ -1723,7 +1755,7 @@ def run_live_sermon(
                         "Manual highlight requested via remote API."
                     )
 
-                    client, clip_number, new_last_save_time, stop_session = (
+                    client, clip_number, new_last_save_time, stop_session, saved_clip_path = (
                         save_triggered_clip(
                             client,
                             clip_number,
@@ -1740,6 +1772,10 @@ def run_live_sermon(
 
                     if new_last_save_time is not None:
                         last_save_time = new_last_save_time
+
+                    if saved_clip_path:
+                        session_stats.record_saved_clip(session_id, saved_clip_path)
+                        session_stats.record_thought(session_id, "saved", 100, [], [])
 
                     continue
 
@@ -2139,7 +2175,7 @@ def run_live_sermon(
 
                 continue
 
-            score, reasons = (
+            score, reasons, matched_phrases, admin_matched_phrases = (
                 score_sermon_moment(
                     thought_text,
                     thought_duration,
@@ -2215,6 +2251,14 @@ def run_live_sermon(
                     "Status: ignore"
                 )
 
+                session_stats.record_thought(
+                    session_id,
+                    "ignored",
+                    score,
+                    matched_phrases,
+                    admin_matched_phrases,
+                )
+
                 continue
 
             if (
@@ -2225,6 +2269,14 @@ def run_live_sermon(
 
                 log(
                     "Status: POSSIBLE CLIP"
+                )
+
+                session_stats.record_thought(
+                    session_id,
+                    "possible",
+                    score,
+                    matched_phrases,
+                    admin_matched_phrases,
                 )
 
                 continue
@@ -2260,13 +2312,26 @@ def run_live_sermon(
                     f"{remaining}s remaining."
                 )
 
+                # Scored as a real strong clip but throttled by timing,
+                # not by score - bucketed as "possible" rather than a
+                # dedicated 4th stat, since it's a timing rejection, not
+                # a preset-quality one (the thing these stats exist to
+                # help tune).
+                session_stats.record_thought(
+                    session_id,
+                    "possible",
+                    score,
+                    matched_phrases,
+                    admin_matched_phrases,
+                )
+
                 continue
 
             # ---------------------------------------------
             # SAVE
             # ---------------------------------------------
 
-            client, clip_number, new_last_save_time, stop_session = (
+            client, clip_number, new_last_save_time, stop_session, saved_clip_path = (
                 save_triggered_clip(
                     client,
                     clip_number,
@@ -2284,7 +2349,26 @@ def run_live_sermon(
             if new_last_save_time is not None:
                 last_save_time = new_last_save_time
 
+            if saved_clip_path:
+                session_stats.record_saved_clip(session_id, saved_clip_path)
+                session_stats.record_thought(
+                    session_id,
+                    "saved",
+                    score,
+                    matched_phrases,
+                    admin_matched_phrases,
+                )
+
     finally:
+
+        try:
+
+            session_stats.end_session(
+                session_id
+            )
+
+        except Exception:
+            pass
 
         # If the service ended while our replay buffer
         # was still active, shut it down.

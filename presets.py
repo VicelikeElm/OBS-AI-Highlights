@@ -37,6 +37,7 @@ DEFAULT_PRESET = "church"
 PRESETS = {
     "church": {
         "label": "Church / Sermon",
+        "hashtags": ["sermon", "church", "faith", "bible", "christian", "jesus", "gospel"],
         "strong_phrases": [
             "the point is",
             "here's the point",
@@ -236,6 +237,7 @@ Revelation.
     },
     "gaming": {
         "label": "Gaming",
+        "hashtags": ["gaming", "gamer", "clip", "highlights", "gameplay", "clutch"],
         "strong_phrases": [
             "let's go",
             "lets go",
@@ -310,6 +312,7 @@ one shot, wallbang, frag, kill streak, comeback, clutch play.
     },
     "twitch": {
         "label": "Twitch / Streaming",
+        "hashtags": ["twitch", "streaming", "streamer", "clip", "livestream"],
         "strong_phrases": [
             "thanks for the sub",
             "thanks for the follow",
@@ -370,6 +373,7 @@ shoutout, giveaway.
     },
     "custom": {
         "label": "Custom",
+        "hashtags": [],
         "strong_phrases": [],
         "application_phrases": [],
         "reference_phrases": [],

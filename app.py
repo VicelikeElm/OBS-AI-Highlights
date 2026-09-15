@@ -26,7 +26,7 @@ import urllib.request
 import webbrowser
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, simpledialog, ttk
 
 try:
     import sv_ttk
@@ -39,6 +39,7 @@ except Exception:
     psutil = None
 
 import config as app_config
+import session_stats
 from settings_ui import SettingsUI
 from version import APP_VERSION, GITHUB_REPO
 
@@ -150,14 +151,17 @@ class MainApp:
         notebook.pack(fill="both", expand=True, padx=12, pady=12)
 
         run_tab = ttk.Frame(notebook, padding=12)
+        sessions_tab = ttk.Frame(notebook, padding=12)
         settings_tab = ttk.Frame(notebook, padding=12)
         updates_tab = ttk.Frame(notebook, padding=12)
 
         notebook.add(run_tab, text="Run")
+        notebook.add(sessions_tab, text="Sessions")
         notebook.add(settings_tab, text="Settings")
         notebook.add(updates_tab, text="Updates")
 
         self._build_run_tab(run_tab)
+        self._build_sessions_tab(sessions_tab)
         self.settings_ui = SettingsUI(settings_tab)
         self._build_updates_tab(updates_tab)
 
@@ -251,6 +255,188 @@ class MainApp:
         config["auto_verify"] = self.auto_verify_var.get()
         config["auto_render"] = self.auto_render_var.get()
         app_config.save_config(config)
+
+    def _build_sessions_tab(self, parent):
+        ttk.Label(
+            parent,
+            text=(
+                "Each Highlight Capture run is a session - browse detection stats to tune "
+                "presets against real data instead of guessing."
+            ),
+            wraplength=680,
+        ).pack(anchor="w", pady=(0, 8))
+
+        list_frame = ttk.Frame(parent)
+        list_frame.pack(fill="both", expand=True)
+
+        columns = ("label", "started", "thoughts", "saved")
+        self.sessions_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
+        self.sessions_tree.heading("label", text="Session")
+        self.sessions_tree.heading("started", text="Started")
+        self.sessions_tree.heading("thoughts", text="Thoughts")
+        self.sessions_tree.heading("saved", text="Saved")
+        self.sessions_tree.column("label", width=260)
+        self.sessions_tree.column("started", width=140)
+        self.sessions_tree.column("thoughts", width=80, anchor="center")
+        self.sessions_tree.column("saved", width=80, anchor="center")
+        self.sessions_tree.pack(side="left", fill="both", expand=True)
+
+        tree_scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.sessions_tree.yview)
+        self.sessions_tree.configure(yscrollcommand=tree_scrollbar.set)
+        tree_scrollbar.pack(side="left", fill="y")
+
+        self.sessions_tree.bind("<<TreeviewSelect>>", lambda _e: self._on_session_selected())
+
+        button_row = ttk.Frame(parent)
+        button_row.pack(fill="x", pady=(8, 8))
+
+        ttk.Button(button_row, text="Refresh", command=self._refresh_sessions_list).pack(side="left")
+        ttk.Button(button_row, text="Rename...", command=self._rename_selected_session).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(button_row, text="Delete", command=self._delete_selected_session).pack(
+            side="left", padx=(6, 0)
+        )
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 8))
+
+        self.session_detail_text = tk.Text(
+            parent,
+            height=14,
+            state="disabled",
+            wrap="word",
+            background="#111111",
+            foreground="#DDDDDD",
+        )
+        self.session_detail_text.pack(fill="both", expand=True)
+
+        self._session_id_by_iid = {}
+        self._refresh_sessions_list()
+
+    def _refresh_sessions_list(self):
+        for row in self.sessions_tree.get_children():
+            self.sessions_tree.delete(row)
+
+        self._session_id_by_iid = {}
+
+        for record in session_stats.list_sessions():
+            started = record.get("started_at", "")[:16].replace("T", " ")
+            iid = self.sessions_tree.insert(
+                "",
+                "end",
+                values=(
+                    record.get("label", ""),
+                    started,
+                    record.get("thoughts_analyzed", 0),
+                    record.get("saved_count", 0),
+                ),
+            )
+            self._session_id_by_iid[iid] = record["session_id"]
+
+        self._clear_session_detail()
+
+    def _selected_session_id(self):
+        selection = self.sessions_tree.selection()
+        if not selection:
+            return None
+        return self._session_id_by_iid.get(selection[0])
+
+    def _on_session_selected(self):
+        session_id = self._selected_session_id()
+        if not session_id:
+            self._clear_session_detail()
+            return
+
+        record = session_stats.get_session(session_id)
+        if not record:
+            self._clear_session_detail()
+            return
+
+        self._show_session_detail(record)
+
+    def _show_session_detail(self, record):
+        lines = []
+        lines.append(f"Session: {record.get('label', '')}")
+        lines.append(f"Preset: {record.get('preset', '')}")
+        lines.append(f"Started: {record.get('started_at', '')}")
+        lines.append(f"Ended: {record.get('ended_at') or '(still running, or ended abnormally)'}")
+        lines.append("")
+        lines.append(f"Thoughts analyzed: {record.get('thoughts_analyzed', 0)}")
+        lines.append(f"  Ignored:  {record.get('ignored_count', 0)}")
+        lines.append(f"  Possible: {record.get('possible_count', 0)}")
+        lines.append(f"  Saved:    {record.get('saved_count', 0)}")
+        lines.append(f"Average score: {session_stats.average_score(record):.1f}")
+        lines.append("")
+
+        lines.append("Phrases most responsible (drove a score up):")
+        top = session_stats.top_phrases(record, key="phrase_hit_counts")
+        if top:
+            for phrase, count in top:
+                lines.append(f"  {count:>3}x  {phrase}")
+        else:
+            lines.append("  (none)")
+        lines.append("")
+
+        lines.append("Rejected/admin phrases (dragged a score down):")
+        top_admin = session_stats.top_phrases(record, key="admin_phrase_hit_counts")
+        if top_admin:
+            for phrase, count in top_admin:
+                lines.append(f"  {count:>3}x  {phrase}")
+        else:
+            lines.append("  (none)")
+        lines.append("")
+
+        clips = record.get("saved_clips", [])
+        lines.append(f"Saved clips ({len(clips)}):")
+        for clip in clips:
+            lines.append(f"  {clip}")
+
+        self.session_detail_text.configure(state="normal")
+        self.session_detail_text.delete("1.0", "end")
+        self.session_detail_text.insert("1.0", "\n".join(lines))
+        self.session_detail_text.configure(state="disabled")
+
+    def _clear_session_detail(self):
+        self.session_detail_text.configure(state="normal")
+        self.session_detail_text.delete("1.0", "end")
+        self.session_detail_text.configure(state="disabled")
+
+    def _rename_selected_session(self):
+        session_id = self._selected_session_id()
+        if not session_id:
+            return
+
+        record = session_stats.get_session(session_id)
+        if not record:
+            return
+
+        new_label = simpledialog.askstring(
+            "Rename Session", "New name:", initialvalue=record.get("label", ""), parent=self.root
+        )
+        if not new_label:
+            return
+
+        session_stats.rename_session(session_id, new_label.strip())
+        self._refresh_sessions_list()
+
+    def _delete_selected_session(self):
+        session_id = self._selected_session_id()
+        if not session_id:
+            return
+
+        record = session_stats.get_session(session_id)
+        if not record:
+            return
+
+        if not messagebox.askyesno(
+            "Delete session",
+            f'Delete stats for "{record.get("label", "")}"?\n\n'
+            "This only removes the stats record - it does not delete the actual clip files.",
+        ):
+            return
+
+        session_stats.delete_session(session_id)
+        self._refresh_sessions_list()
 
     def _build_updates_tab(self, parent):
         ttk.Label(
