@@ -80,7 +80,12 @@ Highlights** from the Start Menu. One window, five tabs:
   folders, set up Scene Rules (e.g. a "BRB" scene pauses clipping, a
   "Gameplay" scene switches to the Gaming preset automatically), and
   switch between a Dark and Light theme (on the About tab) - applies
-  instantly, no restart needed.
+  instantly, no restart needed. Audio source can be either **Loopback**
+  (the default - listens to whatever OBS sends to your speakers/headphones,
+  i.e. your whole program mix) or **Microphone** (listens to a genuine
+  input device directly, useful if you'd rather transcribe just your own
+  mic instead of the full mix); switching source type refreshes the
+  device list to match.
 - **Updates** — checks automatically on launch, or on demand, and can
   download and install a newer version without leaving the app.
 

@@ -136,6 +136,13 @@ AUDIO_DEVICE_FALLBACK = int(
     CONFIG.get("audio_device_fallback_index", 0)
 )
 
+# "loopback" (default) - what's being sent to an output/monitor device,
+# i.e. OBS's own audio mix - or "microphone" - a genuine input device,
+# for transcribing just a mic instead of the whole program mix.
+AUDIO_SOURCE_TYPE = CONFIG.get(
+    "audio_source_type", app_config.DEFAULTS["audio_source_type"]
+)
+
 
 # =========================================================
 # LIVE WHISPER
@@ -280,6 +287,8 @@ def ensure_folders():
 
 def find_loopback_device(audio):
 
+    is_microphone_mode = AUDIO_SOURCE_TYPE == "microphone"
+
     exact_matches = []
     partial_matches = []
 
@@ -300,6 +309,16 @@ def find_loopback_device(audio):
 
         if name == AUDIO_DEVICE_NAME:
             exact_matches.append(index)
+
+        elif is_microphone_mode:
+            # No hardcoded name guess here - every machine's microphone
+            # is named differently, unlike OBS's own default monitor
+            # device. A genuine mic is any non-loopback input device.
+            if (
+                info.get("maxInputChannels", 0) > 0
+                and not info.get("isLoopbackDevice", False)
+            ):
+                partial_matches.append(index)
 
         elif (
             "Headphones"
@@ -342,6 +361,12 @@ def find_loopback_device(audio):
 
     except Exception:
         pass
+
+    if is_microphone_mode:
+        raise RuntimeError(
+            "Could not find a microphone/input device. "
+            "Select one in Settings."
+        )
 
     raise RuntimeError(
         "Could not find the OBS monitor "

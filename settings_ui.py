@@ -50,6 +50,41 @@ def _enumerate_loopback_devices():
         audio.terminate()
 
 
+def _enumerate_input_devices():
+    """Real microphone/input device names on this machine - anything
+    input-capable that ISN'T a WASAPI loopback endpoint. Returns [] on
+    any failure, same fallback behavior as _enumerate_loopback_devices()."""
+    try:
+        import pyaudiowpatch as pyaudio
+    except Exception:
+        return []
+
+    try:
+        audio = pyaudio.PyAudio()
+    except Exception:
+        return []
+
+    try:
+        names = []
+        for index in range(audio.get_device_count()):
+            try:
+                info = audio.get_device_info_by_index(index)
+            except Exception:
+                continue
+            if info.get("maxInputChannels", 0) <= 0:
+                continue
+            if info.get("isLoopbackDevice", False):
+                continue
+            name = str(info.get("name", "")).strip()
+            if name:
+                names.append(name)
+        return names
+    except Exception:
+        return []
+    finally:
+        audio.terminate()
+
+
 WHISPER_MODEL_OPTIONS = (
     "tiny",
     "tiny.en",
@@ -89,6 +124,12 @@ RENDER_ENCODER_LABELS = {
 }
 RENDER_ENCODER_KEY_BY_LABEL = {v: k for k, v in RENDER_ENCODER_LABELS.items()}
 
+AUDIO_SOURCE_TYPE_LABELS = {
+    "loopback": "Loopback (what OBS sends to output)",
+    "microphone": "Microphone (direct input)",
+}
+AUDIO_SOURCE_TYPE_KEY_BY_LABEL = {v: k for k, v in AUDIO_SOURCE_TYPE_LABELS.items()}
+
 PHRASE_LIST_FIELDS = (
     ("strong_phrases", "Strong phrases (one per line)"),
     ("application_phrases", "Application / call-to-action phrases"),
@@ -113,6 +154,7 @@ class SettingsUI:
         self.recording_folder_var = tk.StringVar()
         self.output_folder_var = tk.StringVar()
         self.full_transcript_srt_folder_var = tk.StringVar()
+        self.audio_source_type_var = tk.StringVar()
         self.audio_device_name_var = tk.StringVar()
         self.audio_device_fallback_var = tk.StringVar()
         self.remote_api_enabled_var = tk.BooleanVar()
@@ -976,9 +1018,25 @@ class SettingsUI:
             var.set(hex_value.upper())
 
     def _add_audio_device_row(self, parent):
+        type_row = ttk.Frame(parent)
+        type_row.pack(fill="x", pady=4)
+        ttk.Label(type_row, text="Audio source", width=36, anchor="w").pack(side="left")
+
+        self.audio_source_type_combo = ttk.Combobox(
+            type_row,
+            textvariable=self.audio_source_type_var,
+            state="readonly",
+            values=list(AUDIO_SOURCE_TYPE_LABELS.values()),
+        )
+        self.audio_source_type_combo.pack(side="left", fill="x", expand=True)
+        self.audio_source_type_combo.bind(
+            "<<ComboboxSelected>>", lambda _event: self._refresh_audio_devices()
+        )
+
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text="Audio device (loopback)", width=36, anchor="w").pack(side="left")
+        self.audio_device_row_label = ttk.Label(row, text="Audio device", width=36, anchor="w")
+        self.audio_device_row_label.pack(side="left")
 
         self.audio_device_combo = ttk.Combobox(row, textvariable=self.audio_device_name_var)
         self.audio_device_combo.pack(side="left", fill="x", expand=True)
@@ -992,7 +1050,18 @@ class SettingsUI:
         self._refresh_audio_devices()
 
     def _refresh_audio_devices(self):
-        devices = _enumerate_loopback_devices()
+        is_microphone_mode = (
+            AUDIO_SOURCE_TYPE_KEY_BY_LABEL.get(self.audio_source_type_var.get())
+            == "microphone"
+        )
+
+        if is_microphone_mode:
+            devices = _enumerate_input_devices()
+            self.audio_device_row_label.configure(text="Audio device (microphone)")
+        else:
+            devices = _enumerate_loopback_devices()
+            self.audio_device_row_label.configure(text="Audio device (loopback)")
+
         current = self.audio_device_name_var.get()
 
         self.audio_device_combo.configure(values=devices)
@@ -1051,7 +1120,15 @@ class SettingsUI:
         self.recording_folder_var.set(str(config.get("recording_folder", "")))
         self.output_folder_var.set(str(config.get("output_folder", "")))
         self.full_transcript_srt_folder_var.set(str(config.get("full_transcript_srt_folder", "")))
+
+        audio_source_type = config.get(
+            "audio_source_type", app_config.DEFAULTS["audio_source_type"]
+        )
+        self.audio_source_type_var.set(
+            AUDIO_SOURCE_TYPE_LABELS.get(audio_source_type, AUDIO_SOURCE_TYPE_LABELS["loopback"])
+        )
         self.audio_device_name_var.set(str(config.get("audio_device_name", "")))
+        self._refresh_audio_devices()
         self.audio_device_fallback_var.set(str(config.get("audio_device_fallback_index", 0)))
         self.remote_api_enabled_var.set(bool(config.get("remote_api_enabled", True)))
         self.remote_api_port_var.set(str(config.get("remote_api_port", 8756)))
@@ -1319,6 +1396,9 @@ class SettingsUI:
         config["recording_folder"] = self.recording_folder_var.get().strip()
         config["output_folder"] = self.output_folder_var.get().strip()
         config["full_transcript_srt_folder"] = self.full_transcript_srt_folder_var.get().strip()
+        config["audio_source_type"] = AUDIO_SOURCE_TYPE_KEY_BY_LABEL.get(
+            self.audio_source_type_var.get(), "loopback"
+        )
         config["audio_device_name"] = self.audio_device_name_var.get().strip()
         config["whisper_model"] = self.whisper_model_var.get().strip()
         config["whisper_device"] = self.whisper_device_var.get().strip()

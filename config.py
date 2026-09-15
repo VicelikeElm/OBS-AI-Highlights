@@ -69,6 +69,7 @@ DEFAULTS = {
     "full_transcript_srt_folder": "",
     "audio_device_name": "",
     "audio_device_fallback_index": 0,
+    "audio_source_type": "loopback",
     "whisper_model": "small",
     "whisper_device": "cuda",
     "whisper_compute_type": "float16",

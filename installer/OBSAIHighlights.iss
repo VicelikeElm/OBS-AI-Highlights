@@ -1,5 +1,5 @@
 #define MyAppName "OBS AI Highlights"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "OBS AI Highlights"
 #define MyAppExeName "OBSAIHighlights.exe"
 
