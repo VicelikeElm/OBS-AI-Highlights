@@ -643,6 +643,7 @@ class SettingsUI:
         theme = self._current_theme_key()
 
         ui_theme.apply_theme(theme)
+        self._update_about_logo(theme)
 
         config = app_config.load_config()
         config["theme"] = theme
@@ -650,6 +651,27 @@ class SettingsUI:
 
         if self._on_theme_change:
             self._on_theme_change(theme)
+
+    def _update_about_logo(self, theme):
+        """The logo is drawn as light lines on a transparent background -
+        readable on About's dark-mode background, close to invisible on
+        light. A pre-made dark-line variant (same artwork, colors
+        inverted, transparency untouched) swaps in for light mode
+        instead of inverting pixels at runtime, so this needs no image
+        library as a dependency - just two PNGs to choose between."""
+        filename = (
+            "vivce_media_solutions_ui_light.png"
+            if theme == "light"
+            else "vivce_media_solutions_ui.png"
+        )
+
+        logo_path = app_config.resource_path("assets", filename)
+
+        try:
+            self._about_logo_image = tk.PhotoImage(file=str(logo_path))
+            self._about_logo_label.configure(image=self._about_logo_image)
+        except Exception:
+            pass
 
     def _current_render_style_key(self):
         label = self.render_style_var.get()
@@ -877,13 +899,13 @@ class SettingsUI:
         content = ttk.Frame(parent)
         content.place(relx=0.5, rely=0.5, anchor="center")
 
-        logo_path = app_config.resource_path("assets", "vivce_media_solutions_ui.png")
-
-        try:
-            self._about_logo_image = tk.PhotoImage(file=str(logo_path))
-            ttk.Label(content, image=self._about_logo_image).pack(pady=(0, 12))
-        except Exception:
-            pass
+        # _build_ui() calls this before _load_config_into_fields() sets
+        # self.theme_var, so the initial pick reads self.config (already
+        # loaded in __init__) directly rather than the not-yet-populated
+        # StringVar - _on_theme_selected() keeps this in sync afterward.
+        self._about_logo_label = ttk.Label(content)
+        self._about_logo_label.pack(pady=(0, 12))
+        self._update_about_logo(ui_theme.get_theme(self.config))
 
         ttk.Label(
             content,
