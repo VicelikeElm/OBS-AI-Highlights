@@ -36,38 +36,40 @@ def get_style(name):
     return RENDER_STYLES.get(name, RENDER_STYLES[DEFAULT_STYLE])
 
 
-def build_filter_complex(style_key, output_width, output_height, escaped_srt, force_style):
+def build_video_chain(style_key, output_width, output_height):
+    """The layout-only filter chain for style_key (scale/crop/blur/pad,
+    as appropriate) - starts from the raw "[0:v]" input and ends in an
+    unterminated "[vertical]" label, no trailing ";" and no captions.
+    render_clips.py decides what (if anything) comes next - burning in
+    captions, or using "[vertical]" as the map target directly - since
+    both the vertical layout and the caption burn-in are independently
+    optional (see its BURN_IN_CAPTIONS/APPLY_VERTICAL_LAYOUT)."""
     if style_key == "full_crop":
-        video_chain = (
+        return (
             f"[0:v]scale={output_width}:{output_height}:"
             "force_original_aspect_ratio=increase,"
             f"crop={output_width}:{output_height}"
-            "[vertical];"
+            "[vertical]"
         )
 
-    elif style_key == "original":
-        video_chain = (
+    if style_key == "original":
+        return (
             f"[0:v]scale={output_width}:{output_height}:"
             "force_original_aspect_ratio=decrease,"
             f"pad={output_width}:{output_height}:(ow-iw)/2:(oh-ih)/2:color=black"
-            "[vertical];"
+            "[vertical]"
         )
 
-    else:  # blurred_background (default) - the tool's original, unchanged layout
-        video_chain = (
-            "[0:v]split=2[bg][fg];"
-            f"[bg]scale={output_width}:{output_height}:"
-            "force_original_aspect_ratio=increase,"
-            f"crop={output_width}:{output_height},"
-            "gblur=sigma=35"
-            "[background];"
-            f"[fg]scale={output_width}:{output_height}:"
-            "force_original_aspect_ratio=decrease"
-            "[foreground];"
-            "[background][foreground]overlay=(W-w)/2:(H-h)/2[vertical];"
-        )
-
+    # blurred_background (default) - the tool's original, unchanged layout
     return (
-        video_chain
-        + f"[vertical]subtitles='{escaped_srt}':force_style='{force_style}'[final]"
+        "[0:v]split=2[bg][fg];"
+        f"[bg]scale={output_width}:{output_height}:"
+        "force_original_aspect_ratio=increase,"
+        f"crop={output_width}:{output_height},"
+        "gblur=sigma=35"
+        "[background];"
+        f"[fg]scale={output_width}:{output_height}:"
+        "force_original_aspect_ratio=decrease"
+        "[foreground];"
+        "[background][foreground]overlay=(W-w)/2:(H-h)/2[vertical]"
     )

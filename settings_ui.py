@@ -135,7 +135,9 @@ class SettingsUI:
         self.pause_end_pattern_var = tk.StringVar()
 
         self.render_style_var = tk.StringVar()
+        self.apply_vertical_layout_var = tk.BooleanVar()
         self.render_encoder_var = tk.StringVar()
+        self.burn_in_captions_var = tk.BooleanVar()
         self.caption_style_var = tk.StringVar()
         self.caption_font_name_var = tk.StringVar()
         self.caption_font_size_var = tk.StringVar()
@@ -427,6 +429,23 @@ class SettingsUI:
             ),
             wraplength=680,
             foreground="#888888",
+        ).pack(fill="x", pady=(0, 6))
+
+        ttk.Checkbutton(
+            parent,
+            text="Apply this layout when rendering",
+            variable=self.apply_vertical_layout_var,
+        ).pack(anchor="w", pady=(0, 2))
+
+        ttk.Label(
+            parent,
+            text=(
+                "Turn off to render the verified clip trimmed to its start/end point at its "
+                "original resolution and aspect ratio, untouched otherwise - for finishing it "
+                "yourself in another editor instead of using this tool's layout."
+            ),
+            wraplength=680,
+            foreground="#888888",
         ).pack(fill="x", pady=(0, 10))
 
         encoder_row = ttk.Frame(parent)
@@ -455,6 +474,23 @@ class SettingsUI:
         ).pack(fill="x", pady=(2, 10))
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 10))
+
+        ttk.Checkbutton(
+            parent,
+            text="Burn in captions when rendering",
+            variable=self.burn_in_captions_var,
+        ).pack(anchor="w", pady=(0, 2))
+
+        ttk.Label(
+            parent,
+            text=(
+                "Turn off to render without the captions below baked into the video - the .srt "
+                "caption file is still saved in Verified/, so you can add your own captions in "
+                "another editor if you'd rather not use this tool's style."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 10))
 
         top_row = ttk.Frame(parent)
         top_row.pack(fill="x", pady=(0, 6))
@@ -972,11 +1008,14 @@ class SettingsUI:
         active_render_key = config.get("render_style", render_styles.DEFAULT_STYLE)
         self.render_style_var.set(render_styles.get_style(active_render_key)["label"])
         self._update_render_style_hint()
+        self.apply_vertical_layout_var.set(bool(config.get("apply_vertical_layout", True)))
 
         active_encoder_key = config.get("render_encoder", "nvenc")
         self.render_encoder_var.set(
             RENDER_ENCODER_LABELS.get(active_encoder_key, RENDER_ENCODER_LABELS["nvenc"])
         )
+
+        self.burn_in_captions_var.set(bool(config.get("burn_in_captions", True)))
 
         active_caption_key = config.get("caption_style", caption_styles.DEFAULT_STYLE)
         active_caption_style = caption_styles.get_style(active_caption_key, config.get("custom_caption_style"))
@@ -1247,9 +1286,11 @@ class SettingsUI:
             config["custom_profiles"][profile_name] = self._collect_profile_fields()
 
         config["render_style"] = self._current_render_style_key()
+        config["apply_vertical_layout"] = self.apply_vertical_layout_var.get()
         config["render_encoder"] = RENDER_ENCODER_KEY_BY_LABEL.get(
             self.render_encoder_var.get(), "nvenc"
         )
+        config["burn_in_captions"] = self.burn_in_captions_var.get()
 
         config["caption_style"] = caption_style_key
         if caption_style_key == "custom":

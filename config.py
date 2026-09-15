@@ -89,6 +89,8 @@ DEFAULTS = {
     "render_style": "blurred_background",
     "render_encoder": "nvenc",
     "theme": "dark",
+    "burn_in_captions": True,
+    "apply_vertical_layout": True,
     "scene_rules": [],
     "audio_excitement_enabled": True,
     "audio_excitement_moderate_ratio": 1.6,

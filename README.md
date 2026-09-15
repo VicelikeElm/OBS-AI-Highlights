@@ -38,6 +38,14 @@ Built-in presets change what counts as a good clip:
    suggested title, description, hashtags, and the strongest transcript
    quote - deterministically, with no cloud AI calls.
 
+The vertical layout and the caption burn-in are each independently
+optional (Settings → Video Style) - turn either off if you'd rather
+finish a clip yourself in another editor. With both off, rendering just
+outputs the verified clip trimmed to its start/end point, at its
+original resolution, untouched otherwise; the `.srt` caption file is
+always saved in `Verified/` regardless, so you still have the caption
+text/timing to use elsewhere even with burn-in off.
+
 Each stage can run on its own, or all three from one app - see below.
 
 ## Easy install (Windows)

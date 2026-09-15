@@ -203,6 +203,16 @@ CAPTION_STYLE = caption_styles.build_force_style(ACTIVE_CAPTION_STYLE)
 
 RENDER_STYLE_KEY = CONFIG.get("render_style", render_styles.DEFAULT_STYLE)
 
+# Independent on/off switches for the two things this tool otherwise does
+# to every clip automatically - so someone who wants to finish a clip
+# their own way (their own captions, their own crop, another editor
+# entirely) isn't stuck with this tool's opinions baked in. Both default
+# True, preserving the only behavior this tool has ever had.
+BURN_IN_CAPTIONS = CONFIG.get("burn_in_captions", app_config.DEFAULTS["burn_in_captions"])
+APPLY_VERTICAL_LAYOUT = CONFIG.get(
+    "apply_vertical_layout", app_config.DEFAULTS["apply_vertical_layout"]
+)
+
 
 # =========================================================
 # HELPERS
@@ -272,6 +282,43 @@ def escape_subtitle_path(path):
     )
 
     return text
+
+
+def build_video_filter(escaped_srt):
+    """(filter_complex_or_None, map_target) for the ffmpeg command's
+    -filter_complex/-map pair, from the independent BURN_IN_CAPTIONS and
+    APPLY_VERTICAL_LAYOUT toggles. filter_complex is None when neither is
+    enabled - no filtering is needed at all, so the raw video stream maps
+    straight through to the encoder untouched (just the trim applied)."""
+
+    if APPLY_VERTICAL_LAYOUT:
+
+        video_chain = render_styles.build_video_chain(
+            RENDER_STYLE_KEY,
+            OUTPUT_WIDTH,
+            OUTPUT_HEIGHT,
+        )
+
+        if BURN_IN_CAPTIONS:
+
+            filter_complex = (
+                video_chain
+                + f";[vertical]subtitles='{escaped_srt}':force_style='{CAPTION_STYLE}'[final]"
+            )
+
+            return filter_complex, "[final]"
+
+        return video_chain, "[vertical]"
+
+    if BURN_IN_CAPTIONS:
+
+        filter_complex = (
+            f"[0:v]subtitles='{escaped_srt}':force_style='{CAPTION_STYLE}'[final]"
+        )
+
+        return filter_complex, "[final]"
+
+    return None, "0:v"
 
 
 # =========================================================
@@ -616,15 +663,11 @@ def render_job(job):
     #
     # The actual filter graph is built by render_styles.py, keyed off
     # the configured RENDER_STYLE_KEY - see that module for the layouts
-    # (blurred background, full crop, or original/letterboxed).
+    # (blurred background, full crop, or original/letterboxed). Both the
+    # vertical layout and the caption burn-in are independently optional
+    # (BURN_IN_CAPTIONS / APPLY_VERTICAL_LAYOUT) - see build_video_filter().
 
-    filter_complex = render_styles.build_filter_complex(
-        RENDER_STYLE_KEY,
-        OUTPUT_WIDTH,
-        OUTPUT_HEIGHT,
-        escaped_srt,
-        CAPTION_STYLE,
-    )
+    filter_complex, video_map_target = build_video_filter(escaped_srt)
 
     command = [
         FFMPEG_EXECUTABLE,
@@ -640,12 +683,18 @@ def render_job(job):
 
         "-t",
         f"{duration:.3f}",
+    ]
 
-        "-filter_complex",
-        filter_complex,
+    if filter_complex:
 
+        command += [
+            "-filter_complex",
+            filter_complex,
+        ]
+
+    command += [
         "-map",
-        "[final]",
+        video_map_target,
 
         "-map",
         "0:a?",

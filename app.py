@@ -1005,7 +1005,9 @@ class MainApp:
 
         if kind == "done":
             installer_path = payload
-            self.download_progress_label.configure(text="Download complete. Launching installer...")
+            self.download_progress_label.configure(
+                text="Installing update - OBS AI Highlights will restart automatically..."
+            )
             self._launch_installer_and_exit(installer_path)
             return
 
@@ -1015,8 +1017,15 @@ class MainApp:
         self.update_now_button.configure(state="normal")
 
     def _launch_installer_and_exit(self, installer_path):
+        # /SILENT skips every wizard page (no clicking through) but still
+        # shows a small progress window, rather than /VERYSILENT's
+        # complete silence - some visible sign of life while it installs
+        # beats the app just vanishing for a few seconds with no
+        # explanation. The installer's own [Run] entry (installer.iss,
+        # no "skipifsilent") relaunches the app once it's done, so
+        # nothing else here has to wait for or track that.
         try:
-            subprocess.Popen([str(installer_path)])
+            subprocess.Popen([str(installer_path), "/SILENT", "/SUPPRESSMSGBOX", "/NORESTART"])
         except Exception as exc:
             self.download_progress_label.configure(text=f"Couldn't launch installer: {exc}")
             self.check_updates_button.configure(state="normal")

@@ -1,5 +1,5 @@
 #define MyAppName "OBS AI Highlights"
-#define MyAppVersion "0.4.6"
+#define MyAppVersion "0.4.7"
 #define MyAppPublisher "OBS AI Highlights"
 #define MyAppExeName "OBSAIHighlights.exe"
 
@@ -40,4 +40,8 @@ Name: "{group}\Uninstall OBS AI Highlights"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"; Description: "Launch OBS AI Highlights"; Flags: nowait postinstall skipifsilent
+; No "skipifsilent" - the app's own in-app updater runs this installer
+; silently (see app.py's _launch_installer_and_exit()) and relies on
+; this entry to relaunch it afterward, same as an interactive install's
+; "Launch..." checkbox already does.
+Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"; Description: "Launch OBS AI Highlights"; Flags: nowait postinstall
