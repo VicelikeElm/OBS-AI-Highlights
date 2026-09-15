@@ -391,14 +391,26 @@ def render_clip(base_name):
     render_job() so the result is byte-identical to a normal batch render
     (same ffmpeg command, same ready-to-post metadata sidecar)."""
     metadata_path = VERIFIED_FOLDER / (base_name + ".json")
+    review_json_path = REVIEW_FOLDER / (base_name + ".json")
 
-    if not metadata_path.exists():
-        return False, "This clip isn't Verified yet - approve it first."
+    if metadata_path.exists():
+        metadata = _read_json(metadata_path)
 
-    metadata = _read_json(metadata_path)
+        if not metadata or metadata.get("status") != "VERIFIED":
+            status_label = (metadata or {}).get("status", "").title() or "unknown"
+            return False, f"This clip's status is {status_label}, not Verified - it can't be rendered."
 
-    if not metadata or metadata.get("status") != "VERIFIED":
-        return False, "This clip isn't Verified yet - approve it first."
+    elif review_json_path.exists():
+        # A real, different fix than "Verified but wrong status" below -
+        # Approve only works on a clip already sitting in Review, so
+        # this is the one case where that's actually the right next step.
+        return False, "This clip is in Review, not Verified yet - approve it first."
+
+    else:
+        # No record in either folder at all - it's never been verified,
+        # so Approve (Review -> Verified) doesn't apply here; it needs
+        # the Verify Clips step first (Run tab, or Auto Verify).
+        return False, "This clip hasn't been verified yet - run Verify Clips first."
 
     raw_video = _find_raw_video(base_name)
 
