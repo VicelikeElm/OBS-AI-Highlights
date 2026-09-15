@@ -381,19 +381,51 @@ shoutout, giveaway.
 }
 
 
-def get_preset(name, custom_override=None):
+CUSTOM_PREFIX = "custom:"
+
+
+def is_custom_key(key):
+    """A named custom profile's preset key looks like "custom:My Siege
+    Setup" - distinguishing it from a built-in key ("church", "gaming",
+    ...) without needing a separate config field to track which kind of
+    thing is currently selected."""
+    return str(key).startswith(CUSTOM_PREFIX)
+
+
+def custom_profile_name(key):
+    """"custom:My Siege Setup" -> "My Siege Setup". Only meaningful when
+    is_custom_key(key) is true."""
+    return str(key)[len(CUSTOM_PREFIX):]
+
+
+def make_custom_key(profile_name):
+    return CUSTOM_PREFIX + profile_name
+
+
+def blank_custom_profile():
+    """A fresh, empty starting point for a newly-created named profile."""
+    return dict(PRESETS["custom"])
+
+
+def get_preset(name, custom_profiles=None):
     """Return the preset dict for `name`.
 
-    If name == "custom" and custom_override is given (e.g. loaded from
-    highlight_config.json), it's merged over the empty custom template.
-    Unknown names fall back to DEFAULT_PRESET rather than raising, since
-    this is read on every startup and a bad/missing config value
-    shouldn't crash the engine.
+    `name` is either a built-in key ("church", "gaming", "twitch") or a
+    named custom profile key ("custom:My Siege Setup"). `custom_profiles`
+    is the {profile_name: fields} dict from highlight_config.json's
+    "custom_profiles" - only consulted for a custom key. Unknown names
+    fall back to DEFAULT_PRESET rather than raising, since this is read
+    on every startup and a bad/missing config value shouldn't crash the
+    engine.
     """
-    if name == "custom":
-        merged = dict(PRESETS["custom"])
-        if custom_override:
-            merged.update(custom_override)
+    if is_custom_key(name):
+        profile_name = custom_profile_name(name)
+        custom_profiles = custom_profiles or {}
+
+        merged = blank_custom_profile()
+        merged.update(custom_profiles.get(profile_name, {}))
+        merged["label"] = profile_name
+
         return merged
 
     return PRESETS.get(name, PRESETS[DEFAULT_PRESET])

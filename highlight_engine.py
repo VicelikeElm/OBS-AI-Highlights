@@ -21,6 +21,7 @@ import socket
 
 import config as app_config
 import presets
+import remote_api
 
 
 # =========================================================
@@ -41,8 +42,17 @@ CONFIG = app_config.load_config()
 
 ACTIVE_PRESET = presets.get_preset(
     CONFIG.get("preset", presets.DEFAULT_PRESET),
-    CONFIG.get("custom_preset"),
+    CONFIG.get("custom_profiles"),
 )
+
+# Read once at startup, same as every other config value here - toggling
+# these in the app while a capture is already running takes effect on
+# the next run, not mid-session.
+AUTO_VERIFY = bool(CONFIG.get("auto_verify", True))
+AUTO_RENDER = bool(CONFIG.get("auto_render", True))
+
+REMOTE_API_ENABLED = bool(CONFIG.get("remote_api_enabled", True))
+REMOTE_API_PORT = int(CONFIG.get("remote_api_port", 8756))
 
 
 # =========================================================
@@ -155,6 +165,32 @@ ADMIN_PHRASES = ACTIVE_PRESET["low_value_phrases"]
 PRAYER_START_PHRASES = ACTIVE_PRESET["pause_phrases"]
 PAUSE_END_PATTERN = ACTIVE_PRESET["pause_end_pattern"] or r"(?!)"  # never matches if unset
 WHISPER_INITIAL_PROMPT = ACTIVE_PRESET["whisper_initial_prompt"]
+
+
+def apply_preset(name):
+    """Switches the active preset at runtime (e.g. via the remote API's
+    POST /preset/<name>) by reassigning these same module globals that
+    score_sermon_moment()/update_prayer_state() already read by name -
+    called only from run_live_sermon()'s own thread, never directly from
+    the HTTP handler thread, so scoring never sees a half-updated state.
+    presets.get_preset() already falls back gracefully for an unknown
+    name rather than raising, so this can't crash the capture loop."""
+    global ACTIVE_PRESET, STRONG_PHRASES, APPLICATION_PHRASES
+    global SCRIPTURE_PHRASES, ADMIN_PHRASES, PRAYER_START_PHRASES
+    global PAUSE_END_PATTERN, WHISPER_INITIAL_PROMPT
+
+    new_preset = presets.get_preset(name, CONFIG.get("custom_profiles"))
+
+    ACTIVE_PRESET = new_preset
+    STRONG_PHRASES = new_preset["strong_phrases"]
+    APPLICATION_PHRASES = new_preset["application_phrases"]
+    SCRIPTURE_PHRASES = new_preset["reference_phrases"]
+    ADMIN_PHRASES = new_preset["low_value_phrases"]
+    PRAYER_START_PHRASES = new_preset["pause_phrases"]
+    PAUSE_END_PATTERN = new_preset["pause_end_pattern"] or r"(?!)"
+    WHISPER_INITIAL_PROMPT = new_preset["whisper_initial_prompt"]
+
+    return new_preset["label"]
 
 
 # =========================================================
@@ -1264,13 +1300,94 @@ def save_obs_replay(
     return client, replay_path
 
 
+def save_triggered_clip(client, clip_number, score, thought_text, reasons, thought_duration):
+    """Runs the same replay-buffer-save + move + transcript-write
+    sequence for a clip that's been decided worth saving - whether that
+    decision came from the normal phrase-scoring path or a manual
+    POST /highlight request via the remote API (see run_live_sermon()'s
+    two call sites below). Returns (client, clip_number, last_save_time
+    or None, stop_session) - stop_session=True means the OBS connection
+    was lost and the caller should end its loop."""
+
+    log(
+        f"Waiting "
+        f"{SAVE_DELAY_SECONDS}s "
+        f"before saving..."
+    )
+
+    time.sleep(
+        SAVE_DELAY_SECONDS
+    )
+
+    log(
+        "Saving OBS Replay Buffer..."
+    )
+
+    client, replay_path = (
+        save_obs_replay(
+            client
+        )
+    )
+
+    if client is None:
+
+        log(
+            "OBS connection lost."
+        )
+
+        return client, clip_number, None, True
+
+    if replay_path is None:
+
+        log(
+            "WARNING: Replay was "
+            "not located."
+        )
+
+        return client, clip_number, None, False
+
+    clip_number += 1
+
+    clip_path = move_replay(
+        replay_path,
+        clip_number,
+        score,
+    )
+
+    transcript_path = (
+        save_candidate_transcript(
+            clip_path,
+            score,
+            thought_text,
+            reasons,
+            thought_duration,
+        )
+    )
+
+    log()
+    log("CLIP SAVED:")
+    log(clip_path)
+
+    log()
+    log(
+        "TRANSCRIPT SAVED:"
+    )
+
+    log(
+        transcript_path
+    )
+
+    return client, clip_number, time.time(), False
+
+
 # =========================================================
 # LIVE SERMON SESSION
 # =========================================================
 
 def run_live_sermon(
     client,
-    initial_status
+    initial_status,
+    remote_state=None
 ):
 
     log()
@@ -1411,6 +1528,60 @@ def run_live_sermon(
                     or
                     auto_started_replay
                 )
+
+            # ---------------------------------------------
+            # REMOTE CONTROL: preset switch / manual highlight
+            # ---------------------------------------------
+
+            if remote_state is not None:
+
+                remote_state.update_status(
+                    capturing=True,
+                    preset=ACTIVE_PRESET.get("label"),
+                    clips_saved=clip_number,
+                )
+
+                requested_preset = (
+                    remote_state.consume_preset_switch_request()
+                )
+
+                if requested_preset:
+
+                    new_label = apply_preset(
+                        requested_preset
+                    )
+
+                    log()
+                    log(
+                        f"Preset switched via remote API: {new_label}"
+                    )
+
+                if remote_state.consume_manual_highlight_request():
+
+                    log()
+                    log(
+                        "Manual highlight requested via remote API."
+                    )
+
+                    client, clip_number, new_last_save_time, stop_session = (
+                        save_triggered_clip(
+                            client,
+                            clip_number,
+                            100,
+                            "(manually triggered clip)",
+                            ["Manual highlight via remote API"],
+                            0.0,
+                        )
+                    )
+
+                    if stop_session:
+                        session_running = False
+                        break
+
+                    if new_last_save_time is not None:
+                        last_save_time = new_last_save_time
+
+                    continue
 
             # ---------------------------------------------
             # CAPTURE 6 SEC
@@ -1770,6 +1941,18 @@ def run_live_sermon(
                 )
 
             # ---------------------------------------------
+            # REMOTE PAUSE
+            # ---------------------------------------------
+
+            if remote_state is not None and remote_state.is_paused():
+
+                log(
+                    "Status: paused (remote pause active) - not saving."
+                )
+
+                continue
+
+            # ---------------------------------------------
             # SCORE
             # ---------------------------------------------
 
@@ -1834,55 +2017,10 @@ def run_live_sermon(
             # SAVE
             # ---------------------------------------------
 
-            log(
-                f"Waiting "
-                f"{SAVE_DELAY_SECONDS}s "
-                f"before saving..."
-            )
-
-            time.sleep(
-                SAVE_DELAY_SECONDS
-            )
-
-            log(
-                "Saving OBS Replay Buffer..."
-            )
-
-            client, replay_path = (
-                save_obs_replay(
-                    client
-                )
-            )
-
-            if client is None:
-
-                log(
-                    "OBS connection lost."
-                )
-
-                session_running = False
-                break
-
-            if replay_path is None:
-
-                log(
-                    "WARNING: Replay was "
-                    "not located."
-                )
-
-                continue
-
-            clip_number += 1
-
-            clip_path = move_replay(
-                replay_path,
-                clip_number,
-                score,
-            )
-
-            transcript_path = (
-                save_candidate_transcript(
-                    clip_path,
+            client, clip_number, new_last_save_time, stop_session = (
+                save_triggered_clip(
+                    client,
+                    clip_number,
                     score,
                     thought_text,
                     reasons,
@@ -1890,22 +2028,12 @@ def run_live_sermon(
                 )
             )
 
-            last_save_time = (
-                time.time()
-            )
+            if stop_session:
+                session_running = False
+                break
 
-            log()
-            log("CLIP SAVED:")
-            log(clip_path)
-
-            log()
-            log(
-                "TRANSCRIPT SAVED:"
-            )
-
-            log(
-                transcript_path
-            )
+            if new_last_save_time is not None:
+                last_save_time = new_last_save_time
 
     finally:
 
@@ -2153,6 +2281,16 @@ def run_quality_processor():
     # MEDIUM WHISPER VERIFICATION
     # =====================================================
 
+    if not AUTO_VERIFY:
+
+        log()
+        log(
+            "Auto Verify is turned off - skipping. "
+            "Run Verify Clips manually from the app when you're ready."
+        )
+
+        return True
+
     verified = run_post_service_program(
         "verify",
         "MEDIUM WHISPER VERIFICATION"
@@ -2181,6 +2319,16 @@ def run_quality_processor():
     # STAGE 2
     # VERTICAL SHORT RENDERING
     # =====================================================
+
+    if not AUTO_RENDER:
+
+        log()
+        log(
+            "Auto Render is turned off - skipping. "
+            "Run Render Clips manually from the app when you're ready."
+        )
+
+        return True
 
     rendered = run_post_service_program(
         "render",
@@ -2252,6 +2400,35 @@ def main():
         "until OBS activity begins."
     )
 
+    remote_state = None
+
+    if REMOTE_API_ENABLED:
+
+        remote_state = remote_api.RemoteControlState()
+        server = remote_api.start_server(remote_state, REMOTE_API_PORT)
+
+        if server is not None:
+
+            log()
+            log(
+                f"Remote API listening on "
+                f"http://127.0.0.1:{REMOTE_API_PORT}"
+            )
+
+        else:
+
+            log()
+            log(
+                f"WARNING: Remote API could not bind to port "
+                f"{REMOTE_API_PORT} (already in use?) - continuing "
+                f"without it."
+            )
+
+            remote_state = None
+
+    if remote_state is not None:
+        remote_state.update_status(capturing=False, preset=ACTIVE_PRESET.get("label"), clips_saved=0)
+
     while True:
 
         try:
@@ -2271,8 +2448,12 @@ def main():
 
             client = run_live_sermon(
                 client,
-                status
+                status,
+                remote_state,
             )
+
+            if remote_state is not None:
+                remote_state.update_status(capturing=False)
 
             # ---------------------------------------------
             # WAIT BEFORE MEDIUM

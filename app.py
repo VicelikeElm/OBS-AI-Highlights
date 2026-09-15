@@ -202,6 +202,28 @@ class MainApp:
         )
         self.render_button.pack(side="left", padx=(8, 0))
 
+        pipeline_config = app_config.load_config()
+
+        self.auto_verify_var = tk.BooleanVar(value=bool(pipeline_config.get("auto_verify", True)))
+        self.auto_render_var = tk.BooleanVar(value=bool(pipeline_config.get("auto_render", True)))
+
+        pipeline_row = ttk.Frame(parent)
+        pipeline_row.pack(fill="x", pady=(0, 10))
+
+        ttk.Checkbutton(
+            pipeline_row,
+            text="Auto Verify after capture",
+            variable=self.auto_verify_var,
+            command=self._save_pipeline_settings,
+        ).pack(side="left")
+
+        ttk.Checkbutton(
+            pipeline_row,
+            text="Auto Render after verify (moves finished clips to Ready)",
+            variable=self.auto_render_var,
+            command=self._save_pipeline_settings,
+        ).pack(side="left", padx=(16, 0))
+
         self.status_label = ttk.Label(parent, text="Idle.")
         self.status_label.pack(fill="x", pady=(0, 6))
 
@@ -219,6 +241,16 @@ class MainApp:
         self.log_text.configure(yscrollcommand=scrollbar.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+
+    def _save_pipeline_settings(self):
+        # Read-modify-write against the current on-disk config rather
+        # than any in-memory copy, same reasoning as SettingsUI._save()'s
+        # own fresh-read fix - this and the Settings tab both write to
+        # the same file independently.
+        config = app_config.load_config()
+        config["auto_verify"] = self.auto_verify_var.get()
+        config["auto_render"] = self.auto_render_var.get()
+        app_config.save_config(config)
 
     def _build_updates_tab(self, parent):
         ttk.Label(

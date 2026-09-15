@@ -16,8 +16,9 @@ Built-in presets change what counts as a good clip:
   filtered out
 - **Twitch / Streaming** — sub/raid/hype-train moments, chat-interaction
   phrases
-- **Custom** — write your own phrase lists from scratch, editable in
-  `settings_ui.py`
+- **Custom profiles** — name and save as many of your own presets as you
+  want (My Siege Setup, Podcast, Racing, ...), duplicated from a built-in
+  or from scratch, with export/import to share them
 
 ## How it works
 
@@ -37,12 +38,17 @@ Each stage can run on its own, or all three from one app - see below.
 ## Easy install (Windows)
 
 Run the installer (`OBSAIHighlights-Setup-vX.Y.Z.exe`) and launch **OBS AI
-Highlights** from the Start Menu. One window, two tabs:
+Highlights** from the Start Menu. One window, three tabs:
 
-- **Settings** — pick a preset, set your OBS connection details and
-  password, and point it at your recording/output folders.
-- **Run** — buttons to start/stop live highlight capture, and to manually
-  re-run verification or rendering, with a live log of what's happening.
+- **Run** — start/stop live highlight capture, with Auto Verify/Auto
+  Render checkboxes controlling what happens automatically once a
+  capture ends, plus manual Verify Clips/Render Clips buttons and a live
+  log of what's happening.
+- **Settings** — pick a preset, tune caption styling, set your OBS
+  connection details and password, and point it at your recording/output
+  folders.
+- **Updates** — checks automatically on launch, or on demand, and can
+  download and install a newer version without leaving the app.
 
 Prerequisites the installer doesn't bundle:
 - An NVIDIA GPU + driver for the default (CUDA) Whisper settings - switch
@@ -73,6 +79,32 @@ internally:
 python highlight_engine.py   # live capture + scoring, while OBS is streaming/recording
 python verify_clips.py       # re-verify clips saved so far
 python render_clips.py       # render verified clips into finished vertical shorts
+```
+
+## Remote API (Stream Deck / Companion / AutoHotkey)
+
+While Highlight Capture is running, a small local HTTP API is available
+for external tools to trigger and query it - configurable (enable/port)
+in Settings → OBS & Folders. Bound to `127.0.0.1` only; it's never
+reachable from the network, and it isn't available when capture isn't
+running.
+
+```
+GET  /status              -> { "capturing": true, "preset": "Gaming", "paused": false, "clips_saved": 3 }
+POST /highlight            -> save whatever's in the replay buffer right now, bypassing the phrase-scoring gate
+POST /pause                -> suspend automatic clip-saving
+POST /resume               -> resume automatic clip-saving
+POST /preset/<name>        -> switch the active preset (a built-in key like "gaming", or a URL-encoded
+                               "custom:<profile name>" for a named profile - same keys used in
+                               highlight_config.json's "preset" field)
+```
+
+Example with `curl` (default port 8756):
+
+```bash
+curl http://127.0.0.1:8756/status
+curl -X POST http://127.0.0.1:8756/highlight
+curl -X POST http://127.0.0.1:8756/preset/gaming
 ```
 
 ## Building the Windows installer

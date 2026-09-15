@@ -79,7 +79,14 @@ DEFAULTS = {
     "save_threshold": 70,
     "verified_similarity": 82,
     "verified_confidence": 0.70,
-    "custom_preset": {},
+    "custom_profiles": {},
+    "auto_verify": True,
+    "auto_render": True,
+    "caption_style": "clean",
+    "custom_caption_style": {},
+    "remote_api_enabled": True,
+    "remote_api_port": 8756,
+    "render_style": "blurred_background",
 }
 
 
@@ -104,10 +111,33 @@ def _read_json(path, default=None):
         return default
 
 
+def _migrate_single_custom_preset(config):
+    """Older versions stored one unnamed custom preset under
+    "custom_preset" with config["preset"] == "custom". Named profiles
+    replaced that with a "custom_profiles" dict of {name: fields} - fold
+    a real, non-empty old value into a named profile instead of silently
+    discarding someone's already-tuned phrase lists. Runs on every load
+    (cheap, idempotent) until the next save rewrites the file without
+    the old key."""
+    old_preset = config.pop("custom_preset", None)
+    if not old_preset:
+        return
+
+    name = "My Custom Preset"
+    if name not in config["custom_profiles"]:
+        config["custom_profiles"] = dict(config["custom_profiles"])
+        config["custom_profiles"][name] = old_preset
+
+    if config.get("preset") == "custom":
+        import presets
+        config["preset"] = presets.make_custom_key(name)
+
+
 def load_config():
     """Returns the config dict, DEFAULTS overlaid with whatever's saved."""
     config = dict(DEFAULTS)
     config.update(_read_json(CONFIG_FILE, {}))
+    _migrate_single_custom_preset(config)
     return config
 
 

@@ -7,6 +7,7 @@ from datetime import datetime
 from rapidfuzz import fuzz
 from faster_whisper import WhisperModel
 
+import caption_styles
 import config as app_config
 import presets
 
@@ -18,8 +19,14 @@ import presets
 CONFIG = app_config.load_config()
 ACTIVE_PRESET = presets.get_preset(
     CONFIG.get("preset", presets.DEFAULT_PRESET),
-    CONFIG.get("custom_preset"),
+    CONFIG.get("custom_profiles"),
 )
+
+ACTIVE_CAPTION_STYLE = caption_styles.get_style(
+    CONFIG.get("caption_style", caption_styles.DEFAULT_STYLE),
+    CONFIG.get("custom_caption_style"),
+)
+MAX_WORDS_PER_LINE = int(ACTIVE_CAPTION_STYLE.get("max_words_per_line", 7))
 
 SHORTS_ROOT = str(app_config.get_output_folder(CONFIG))
 
@@ -1274,14 +1281,16 @@ def build_caption_groups(
             or word_text.endswith(",")
         )
 
-        # Aim for short readable caption blocks
+        # Aim for short readable caption blocks, sized to the active
+        # caption style's max_words_per_line (defaults to 7, matching
+        # the original hardcoded behavior exactly).
         should_finish = False
 
-        if len(current) >= 7:
+        if len(current) >= MAX_WORDS_PER_LINE:
             should_finish = True
 
         elif (
-            len(current) >= 4
+            len(current) >= max(2, MAX_WORDS_PER_LINE - 3)
             and punctuation_end
         ):
             should_finish = True

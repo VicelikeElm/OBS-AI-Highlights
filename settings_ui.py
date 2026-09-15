@@ -9,17 +9,20 @@ codebase at all. Run directly:
     python settings_ui.py
 """
 
+import json
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 try:
     import sv_ttk
 except Exception:
     sv_ttk = None
 
+import caption_styles
 import config as app_config
 import presets
+import render_styles
 
 
 def _enumerate_loopback_devices():
@@ -101,6 +104,8 @@ class SettingsUI:
         self.full_transcript_srt_folder_var = tk.StringVar()
         self.audio_device_name_var = tk.StringVar()
         self.audio_device_fallback_var = tk.StringVar()
+        self.remote_api_enabled_var = tk.BooleanVar()
+        self.remote_api_port_var = tk.StringVar()
         self.whisper_model_var = tk.StringVar()
         self.whisper_device_var = tk.StringVar()
         self.whisper_compute_type_var = tk.StringVar()
@@ -113,12 +118,27 @@ class SettingsUI:
         self.verified_confidence_var = tk.StringVar()
         self.pause_end_pattern_var = tk.StringVar()
 
+        self.render_style_var = tk.StringVar()
+        self.caption_style_var = tk.StringVar()
+        self.caption_font_name_var = tk.StringVar()
+        self.caption_font_size_var = tk.StringVar()
+        self.caption_bold_var = tk.BooleanVar()
+        self.caption_text_color_var = tk.StringVar()
+        self.caption_outline_color_var = tk.StringVar()
+        self.caption_outline_width_var = tk.StringVar()
+        self.caption_shadow_var = tk.StringVar()
+        self.caption_background_enabled_var = tk.BooleanVar()
+        self.caption_background_color_var = tk.StringVar()
+        self.caption_background_opacity_var = tk.StringVar()
+        self.caption_position_var = tk.StringVar()
+        self.caption_margin_h_var = tk.StringVar()
+        self.caption_margin_v_var = tk.StringVar()
+        self.caption_max_words_var = tk.StringVar()
+
         self.phrase_list_widgets = {}
         self.whisper_prompt_widget = None
 
         self._preset_key_by_label = {}
-        for key, preset in presets.PRESETS.items():
-            self._preset_key_by_label[preset["label"]] = key
 
         self._build_ui()
         self._load_config_into_fields()
@@ -137,16 +157,19 @@ class SettingsUI:
         preset_tab = ttk.Frame(notebook, padding=12)
         connection_tab = ttk.Frame(notebook, padding=12)
         model_tab = ttk.Frame(notebook, padding=12)
+        caption_tab = ttk.Frame(notebook, padding=12)
         about_tab = ttk.Frame(notebook, padding=12)
 
         notebook.add(preset_tab, text="Preset & Phrases")
         notebook.add(connection_tab, text="OBS & Folders")
         notebook.add(model_tab, text="Whisper & Thresholds")
+        notebook.add(caption_tab, text="Video Style")
         notebook.add(about_tab, text="About")
 
         self._build_preset_tab(preset_tab)
         self._build_connection_tab(connection_tab)
         self._build_model_tab(model_tab)
+        self._build_caption_style_tab(caption_tab)
         self._build_about_tab(about_tab)
 
         button_row = ttk.Frame(outer, padding=(0, 12, 0, 0))
@@ -160,30 +183,48 @@ class SettingsUI:
 
     def _build_preset_tab(self, parent):
         top_row = ttk.Frame(parent)
-        top_row.pack(fill="x", pady=(0, 10))
+        top_row.pack(fill="x", pady=(0, 6))
 
         ttk.Label(top_row, text="Preset:").pack(side="left")
 
-        preset_combo = ttk.Combobox(
+        self.preset_combo = ttk.Combobox(
             top_row,
             textvariable=self.preset_var,
-            values=[preset["label"] for preset in presets.PRESETS.values()],
             state="readonly",
             width=24,
         )
-        preset_combo.pack(side="left", padx=(8, 0))
-        preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_preset_changed())
+        self.preset_combo.pack(side="left", padx=(8, 0))
+        self.preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_preset_changed())
+
+        profile_button_row = ttk.Frame(parent)
+        profile_button_row.pack(fill="x", pady=(0, 10))
+
+        ttk.Button(profile_button_row, text="New...", command=self._new_profile).pack(side="left")
+        ttk.Button(profile_button_row, text="Duplicate...", command=self._duplicate_profile).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(profile_button_row, text="Delete", command=self._delete_profile).pack(
+            side="left", padx=(6, 0)
+        )
+        ttk.Button(profile_button_row, text="Export...", command=self._export_profile).pack(
+            side="left", padx=(16, 0)
+        )
+        ttk.Button(profile_button_row, text="Import...", command=self._import_profile).pack(
+            side="left", padx=(6, 0)
+        )
 
         hint = ttk.Label(
             parent,
             text=(
-                "Built-in presets are read-only. Choose Custom to write your "
-                "own phrase lists - they're saved and reused next time."
+                "Built-in presets are read-only. Duplicate one (or use New) to make "
+                "your own named profile - it's saved and reused next time."
             ),
             wraplength=680,
             foreground="#888888",
         )
         hint.pack(fill="x", pady=(0, 10))
+
+        self._refresh_preset_dropdown_values()
 
         for field, label in PHRASE_LIST_FIELDS:
             ttk.Label(parent, text=label).pack(fill="x")
@@ -238,6 +279,22 @@ class SettingsUI:
 
         self._add_audio_device_row(parent)
         self._add_labeled_entry(parent, "Audio device fallback index", self.audio_device_fallback_var)
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
+
+        self._add_labeled_checkbox(
+            parent, "Remote API enabled (Stream Deck / Companion / etc.)", self.remote_api_enabled_var
+        )
+        self._add_labeled_spinbox(parent, "Remote API port", self.remote_api_port_var, 1024, 65535, 1)
+        ttk.Label(
+            parent,
+            text=(
+                "Only reachable from this machine (127.0.0.1), never the network. "
+                "Only active while Highlight Capture is running - see the README for the endpoints."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 8))
 
         ttk.Button(
             parent,
@@ -302,6 +359,232 @@ class SettingsUI:
             "Review.",
         )
 
+    def _build_caption_style_tab(self, parent):
+        render_row = ttk.Frame(parent)
+        render_row.pack(fill="x", pady=(0, 4))
+
+        ttk.Label(render_row, text="Video layout:").pack(side="left")
+
+        render_style_labels = [style["label"] for style in render_styles.RENDER_STYLES.values()]
+        self.render_style_combo = ttk.Combobox(
+            render_row,
+            textvariable=self.render_style_var,
+            values=render_style_labels,
+            state="readonly",
+            width=22,
+        )
+        self.render_style_combo.pack(side="left", padx=(8, 0))
+        self.render_style_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_render_style_hint())
+
+        self.render_style_hint_label = ttk.Label(
+            parent, text="", wraplength=680, foreground="#888888"
+        )
+        self.render_style_hint_label.pack(fill="x", pady=(2, 6))
+
+        ttk.Label(
+            parent,
+            text=(
+                "Face Cam + Gameplay and Top/Bottom layouts aren't available yet - they'd need OBS "
+                "recording separate camera/gameplay tracks, not just a render option."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 10))
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 10))
+
+        top_row = ttk.Frame(parent)
+        top_row.pack(fill="x", pady=(0, 6))
+
+        ttk.Label(top_row, text="Style:").pack(side="left")
+
+        style_labels = [style["label"] for style in caption_styles.CAPTION_STYLES.values()] + ["Custom"]
+        self.caption_style_combo = ttk.Combobox(
+            top_row,
+            textvariable=self.caption_style_var,
+            values=style_labels,
+            state="readonly",
+            width=20,
+        )
+        self.caption_style_combo.pack(side="left", padx=(8, 0))
+        self.caption_style_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_caption_style_changed())
+
+        ttk.Label(
+            parent,
+            text="Built-in styles are read-only. Choose Custom to tune your own.",
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 10))
+
+        columns = ttk.Frame(parent)
+        columns.pack(fill="x")
+
+        left = ttk.Frame(columns)
+        left.pack(side="left", fill="both", expand=True)
+
+        right = ttk.Frame(columns)
+        right.pack(side="left", fill="both", expand=True, padx=(20, 0))
+
+        self.caption_style_widgets = [
+            self._add_labeled_entry(left, "Font name", self.caption_font_name_var, label_width=18),
+            self._add_labeled_spinbox(
+                left, "Font size", self.caption_font_size_var, 10, 72, 1, label_width=18
+            ),
+            self._add_labeled_checkbox(left, "Bold", self.caption_bold_var, label_width=18),
+            self._add_labeled_combo(
+                left, "Position", self.caption_position_var, ("bottom", "middle", "top"), label_width=18
+            ),
+            self._add_labeled_spinbox(
+                left, "Max words/line", self.caption_max_words_var, 1, 15, 1, label_width=18
+            ),
+            self._add_labeled_spinbox(
+                left, "Horizontal margin", self.caption_margin_h_var, 0, 300, 10, label_width=18
+            ),
+            self._add_labeled_spinbox(
+                left, "Vertical margin", self.caption_margin_v_var, 0, 600, 10, label_width=18
+            ),
+        ]
+
+        text_color_entry, text_color_button = self._add_labeled_color(
+            right, "Text color", self.caption_text_color_var, label_width=18
+        )
+        outline_color_entry, outline_color_button = self._add_labeled_color(
+            right, "Outline color", self.caption_outline_color_var, label_width=18
+        )
+        background_color_entry, background_color_button = self._add_labeled_color(
+            right, "Background color", self.caption_background_color_var, label_width=18
+        )
+
+        self.caption_style_widgets.extend([
+            text_color_entry,
+            text_color_button,
+            outline_color_entry,
+            outline_color_button,
+            self._add_labeled_spinbox(
+                right, "Outline width", self.caption_outline_width_var, 0, 10, 1, label_width=18
+            ),
+            self._add_labeled_spinbox(right, "Shadow", self.caption_shadow_var, 0, 5, 1, label_width=18),
+            self._add_labeled_checkbox(
+                right, "Background box", self.caption_background_enabled_var, label_width=18
+            ),
+            background_color_entry,
+            background_color_button,
+            self._add_labeled_spinbox(
+                right, "Background opacity %", self.caption_background_opacity_var, 0, 100, 5, label_width=18
+            ),
+        ])
+
+        ttk.Label(
+            parent, text="Preview (approximate style only - not an actual video render)"
+        ).pack(anchor="w", pady=(14, 4))
+
+        self.caption_preview_canvas = tk.Canvas(
+            parent, height=140, background="#202020", highlightthickness=1, highlightbackground="#555555"
+        )
+        self.caption_preview_canvas.pack(fill="x")
+
+        button_row = ttk.Frame(parent)
+        button_row.pack(fill="x", pady=(12, 0))
+
+        ttk.Button(button_row, text="Refresh Preview", command=self._update_caption_preview).pack(side="left")
+        ttk.Button(button_row, text="Save", command=self._save).pack(side="right")
+
+    def _current_render_style_key(self):
+        label = self.render_style_var.get()
+        for key, style in render_styles.RENDER_STYLES.items():
+            if style["label"] == label:
+                return key
+        return render_styles.DEFAULT_STYLE
+
+    def _update_render_style_hint(self):
+        style = render_styles.get_style(self._current_render_style_key())
+        self.render_style_hint_label.configure(text=style["description"])
+
+    def _on_caption_style_changed(self):
+        self._display_caption_style(self._current_caption_style_key())
+        self._update_caption_preview()
+
+    def _current_caption_style_key(self):
+        label = self.caption_style_var.get()
+        for key, style in caption_styles.CAPTION_STYLES.items():
+            if style["label"] == label:
+                return key
+        return "custom"
+
+    def _display_caption_style(self, style_key):
+        is_custom = style_key == "custom"
+        style = caption_styles.get_style(style_key, self.config.get("custom_caption_style"))
+
+        self.caption_font_name_var.set(style.get("font_name", "Arial"))
+        self.caption_font_size_var.set(str(style.get("font_size", 24)))
+        self.caption_bold_var.set(bool(style.get("bold", True)))
+        self.caption_text_color_var.set(style.get("text_color", "#FFFFFF"))
+        self.caption_outline_color_var.set(style.get("outline_color", "#000000"))
+        self.caption_outline_width_var.set(str(style.get("outline_width", 3)))
+        self.caption_shadow_var.set(str(style.get("shadow", 1)))
+        self.caption_background_enabled_var.set(bool(style.get("background_enabled", False)))
+        self.caption_background_color_var.set(style.get("background_color", "#000000"))
+        self.caption_background_opacity_var.set(str(style.get("background_opacity", 50)))
+        self.caption_position_var.set(style.get("position", "bottom"))
+        self.caption_margin_h_var.set(str(style.get("margin_h", 90)))
+        self.caption_margin_v_var.set(str(style.get("margin_v", 300)))
+        self.caption_max_words_var.set(str(style.get("max_words_per_line", 7)))
+
+        state = "normal" if is_custom else "disabled"
+        for widget in self.caption_style_widgets:
+            try:
+                widget.configure(state=state)
+            except tk.TclError:
+                pass
+
+    def _collect_caption_style_fields(self):
+        return {
+            "font_name": self.caption_font_name_var.get().strip() or "Arial",
+            "font_size": int(self.caption_font_size_var.get()),
+            "bold": self.caption_bold_var.get(),
+            "text_color": self.caption_text_color_var.get().strip() or "#FFFFFF",
+            "outline_color": self.caption_outline_color_var.get().strip() or "#000000",
+            "outline_width": int(self.caption_outline_width_var.get()),
+            "shadow": int(self.caption_shadow_var.get()),
+            "background_enabled": self.caption_background_enabled_var.get(),
+            "background_color": self.caption_background_color_var.get().strip() or "#000000",
+            "background_opacity": int(self.caption_background_opacity_var.get()),
+            "position": self.caption_position_var.get().strip() or "bottom",
+            "margin_h": int(self.caption_margin_h_var.get()),
+            "margin_v": int(self.caption_margin_v_var.get()),
+            "max_words_per_line": int(self.caption_max_words_var.get()),
+        }
+
+    def _update_caption_preview(self):
+        canvas = self.caption_preview_canvas
+        canvas.delete("all")
+        canvas.update_idletasks()
+
+        width = canvas.winfo_width() or 600
+        height = 140
+
+        try:
+            fields = self._collect_caption_style_fields()
+        except ValueError:
+            return
+
+        y = {"bottom": height - 25, "middle": height // 2, "top": 25}.get(fields["position"], height - 25)
+
+        font_spec = (fields["font_name"], max(8, fields["font_size"] // 2), "bold" if fields["bold"] else "normal")
+
+        if fields["background_enabled"]:
+            canvas.create_rectangle(
+                0, y - 20, width, y + 20, fill=fields["background_color"], outline="", stipple="gray50"
+            )
+
+        canvas.create_text(
+            width / 2,
+            y,
+            text="Sample Caption Text",
+            fill=fields["text_color"],
+            font=font_spec,
+        )
+
     def _build_about_tab(self, parent):
         content = ttk.Frame(parent)
         content.place(relx=0.5, rely=0.5, anchor="center")
@@ -326,29 +609,61 @@ class SettingsUI:
             foreground="#888888",
         ).pack()
 
-    def _add_labeled_combo(self, parent, label, var, values):
+    def _add_labeled_combo(self, parent, label, var, values, label_width=36):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text=label, width=36, anchor="w").pack(side="left")
-        ttk.Combobox(row, textvariable=var, values=values).pack(side="left", fill="x", expand=True)
+        ttk.Label(row, text=label, width=label_width, anchor="w").pack(side="left")
+        widget = ttk.Combobox(row, textvariable=var, values=values)
+        widget.pack(side="left", fill="x", expand=True)
+        return widget
 
-    def _add_labeled_spinbox(self, parent, label, var, from_, to, increment, fmt=None):
+    def _add_labeled_spinbox(self, parent, label, var, from_, to, increment, fmt=None, label_width=36):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text=label, width=36, anchor="w").pack(side="left")
+        ttk.Label(row, text=label, width=label_width, anchor="w").pack(side="left")
 
         kwargs = {}
         if fmt:
             kwargs["format"] = fmt
 
-        ttk.Spinbox(
+        widget = ttk.Spinbox(
             row,
             from_=from_,
             to=to,
             increment=increment,
             textvariable=var,
             **kwargs,
-        ).pack(side="left", fill="x", expand=True)
+        )
+        widget.pack(side="left", fill="x", expand=True)
+        return widget
+
+    def _add_labeled_checkbox(self, parent, label, var, label_width=20):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=4)
+        ttk.Label(row, text=label, width=label_width, anchor="w").pack(side="left")
+        widget = ttk.Checkbutton(row, variable=var)
+        widget.pack(side="left")
+        return widget
+
+    def _add_labeled_color(self, parent, label, var, label_width=20):
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=4)
+        ttk.Label(row, text=label, width=label_width, anchor="w").pack(side="left")
+        entry = ttk.Entry(row, textvariable=var, width=10)
+        entry.pack(side="left")
+        button = ttk.Button(row, text="Pick...", command=lambda v=var: self._pick_color(v))
+        button.pack(side="left", padx=(4, 0))
+        return entry, button
+
+    def _pick_color(self, var):
+        current = var.get().strip() or "#FFFFFF"
+        try:
+            _rgb, hex_value = colorchooser.askcolor(color=current, parent=self.parent)
+        except tk.TclError:
+            _rgb, hex_value = colorchooser.askcolor(parent=self.parent)
+
+        if hex_value:
+            var.set(hex_value.upper())
 
     def _add_audio_device_row(self, parent):
         row = ttk.Frame(parent)
@@ -378,11 +693,13 @@ class SettingsUI:
         # empty or didn't include it.
         self.audio_device_name_var.set(current)
 
-    def _add_labeled_entry(self, parent, label, var):
+    def _add_labeled_entry(self, parent, label, var, label_width=36):
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=4)
-        ttk.Label(row, text=label, width=36, anchor="w").pack(side="left")
-        ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
+        ttk.Label(row, text=label, width=label_width, anchor="w").pack(side="left")
+        widget = ttk.Entry(row, textvariable=var)
+        widget.pack(side="left", fill="x", expand=True)
+        return widget
 
     def _add_labeled_folder(self, parent, label, var):
         row = ttk.Frame(parent)
@@ -414,7 +731,7 @@ class SettingsUI:
         config = self.config
 
         active_key = config.get("preset", presets.DEFAULT_PRESET)
-        active_preset = presets.PRESETS.get(active_key, presets.PRESETS[presets.DEFAULT_PRESET])
+        active_preset = presets.get_preset(active_key, config.get("custom_profiles", {}))
         self.preset_var.set(active_preset["label"])
 
         self.obs_host_var.set(str(config.get("obs_host", "")))
@@ -424,6 +741,8 @@ class SettingsUI:
         self.full_transcript_srt_folder_var.set(str(config.get("full_transcript_srt_folder", "")))
         self.audio_device_name_var.set(str(config.get("audio_device_name", "")))
         self.audio_device_fallback_var.set(str(config.get("audio_device_fallback_index", 0)))
+        self.remote_api_enabled_var.set(bool(config.get("remote_api_enabled", True)))
+        self.remote_api_port_var.set(str(config.get("remote_api_port", 8756)))
         self.whisper_model_var.set(str(config.get("whisper_model", "")))
         self.whisper_device_var.set(str(config.get("whisper_device", "")))
         self.whisper_compute_type_var.set(str(config.get("whisper_compute_type", "")))
@@ -437,17 +756,25 @@ class SettingsUI:
 
         self._display_preset_phrases(active_key)
 
+        active_render_key = config.get("render_style", render_styles.DEFAULT_STYLE)
+        self.render_style_var.set(render_styles.get_style(active_render_key)["label"])
+        self._update_render_style_hint()
+
+        active_caption_key = config.get("caption_style", caption_styles.DEFAULT_STYLE)
+        active_caption_style = caption_styles.get_style(active_caption_key, config.get("custom_caption_style"))
+        self.caption_style_var.set(active_caption_style["label"])
+        self._display_caption_style(active_caption_key)
+        self._update_caption_preview()
+
+    def _current_preset_key(self):
+        return self._preset_key_by_label.get(self.preset_var.get(), presets.DEFAULT_PRESET)
+
     def _on_preset_changed(self):
-        selected_key = self._preset_key_by_label.get(self.preset_var.get(), presets.DEFAULT_PRESET)
-        self._display_preset_phrases(selected_key)
+        self._display_preset_phrases(self._current_preset_key())
 
     def _display_preset_phrases(self, preset_key):
-        is_custom = preset_key == "custom"
-
-        if is_custom:
-            preset = presets.get_preset("custom", self.config.get("custom_preset"))
-        else:
-            preset = presets.PRESETS[preset_key]
+        is_custom = presets.is_custom_key(preset_key)
+        preset = presets.get_preset(preset_key, self.config.get("custom_profiles", {}))
 
         for field, _label in PHRASE_LIST_FIELDS:
             widget = self.phrase_list_widgets[field]
@@ -463,25 +790,195 @@ class SettingsUI:
         self.whisper_prompt_widget.insert("1.0", preset.get("whisper_initial_prompt", "").strip())
         self.whisper_prompt_widget.configure(state="normal" if is_custom else "disabled")
 
-    def _collect_custom_preset(self):
-        custom = {}
+    def _collect_profile_fields(self):
+        fields = {}
         for field, _label in PHRASE_LIST_FIELDS:
             raw = self.phrase_list_widgets[field].get("1.0", "end")
-            custom[field] = [line.strip() for line in raw.splitlines() if line.strip()]
+            fields[field] = [line.strip() for line in raw.splitlines() if line.strip()]
 
-        custom["pause_end_pattern"] = self.pause_end_pattern_var.get().strip()
-        custom["whisper_initial_prompt"] = self.whisper_prompt_widget.get("1.0", "end").strip()
-        return custom
+        fields["pause_end_pattern"] = self.pause_end_pattern_var.get().strip()
+        fields["whisper_initial_prompt"] = self.whisper_prompt_widget.get("1.0", "end").strip()
+        return fields
+
+    # -----------------------------------------------------------
+    # Named custom profiles: New / Duplicate / Delete / Export / Import
+    # -----------------------------------------------------------
+
+    def _refresh_preset_dropdown_values(self):
+        self._preset_key_by_label = {}
+
+        for key, preset in presets.PRESETS.items():
+            if key == "custom":
+                continue  # the blank template - not directly selectable, only named profiles are
+            self._preset_key_by_label[preset["label"]] = key
+
+        for name in sorted(self.config.get("custom_profiles", {}).keys()):
+            self._preset_key_by_label[name] = presets.make_custom_key(name)
+
+        self.preset_combo.configure(values=list(self._preset_key_by_label.keys()))
+
+    def _select_profile_by_key(self, key):
+        for label, candidate_key in self._preset_key_by_label.items():
+            if candidate_key == key:
+                self.preset_var.set(label)
+                self._display_preset_phrases(key)
+                return
+
+    def _prompt_profile_name(self, title, initial=""):
+        built_in_labels = {preset["label"] for preset in presets.PRESETS.values()}
+
+        while True:
+            name = simpledialog.askstring(title, "Profile name:", initialvalue=initial, parent=self.parent)
+            if name is None:
+                return None
+
+            name = name.strip()
+
+            if not name:
+                messagebox.showerror("Invalid name", "Profile name can't be empty.")
+                continue
+
+            if name in built_in_labels:
+                messagebox.showerror(
+                    "Invalid name", f'"{name}" is a built-in preset name - pick something else.'
+                )
+                continue
+
+            if name in self.config.get("custom_profiles", {}):
+                if not messagebox.askyesno(
+                    "Already exists", f'A profile named "{name}" already exists. Overwrite it?'
+                ):
+                    continue
+
+            return name
+
+    def _create_or_replace_profile(self, name, fields):
+        config = app_config.load_config()
+        config["custom_profiles"] = dict(config.get("custom_profiles", {}))
+        config["custom_profiles"][name] = fields
+        app_config.save_config(config)
+
+        self.config = config
+        self._refresh_preset_dropdown_values()
+
+    def _new_profile(self):
+        name = self._prompt_profile_name("New Profile")
+        if not name:
+            return
+
+        self._create_or_replace_profile(name, presets.blank_custom_profile())
+        self._select_profile_by_key(presets.make_custom_key(name))
+
+    def _duplicate_profile(self):
+        source_key = self._current_preset_key()
+        source_preset = presets.get_preset(source_key, self.config.get("custom_profiles", {}))
+
+        name = self._prompt_profile_name("Duplicate Profile", initial=f"{source_preset['label']} (copy)")
+        if not name:
+            return
+
+        fields = {k: v for k, v in source_preset.items() if k != "label"}
+        self._create_or_replace_profile(name, fields)
+        self._select_profile_by_key(presets.make_custom_key(name))
+
+    def _delete_profile(self):
+        selected_key = self._current_preset_key()
+
+        if not presets.is_custom_key(selected_key):
+            messagebox.showerror("Can't delete", "Built-in presets can't be deleted.")
+            return
+
+        name = presets.custom_profile_name(selected_key)
+        if not messagebox.askyesno("Delete profile", f'Delete the custom profile "{name}"? This can\'t be undone.'):
+            return
+
+        config = app_config.load_config()
+        config["custom_profiles"] = dict(config.get("custom_profiles", {}))
+        config["custom_profiles"].pop(name, None)
+
+        if config.get("preset") == selected_key:
+            config["preset"] = presets.DEFAULT_PRESET
+
+        app_config.save_config(config)
+        self.config = config
+        self._refresh_preset_dropdown_values()
+        self._select_profile_by_key(config["preset"])
+
+    def _export_profile(self):
+        selected_key = self._current_preset_key()
+        preset = presets.get_preset(selected_key, self.config.get("custom_profiles", {}))
+
+        # Export whatever's currently showing in the fields, so in-progress
+        # edits to a custom profile can be exported before they're saved.
+        if presets.is_custom_key(selected_key):
+            fields = self._collect_profile_fields()
+        else:
+            fields = dict(preset)
+
+        default_name = preset["label"].replace("/", "-").strip() + ".json"
+        path = filedialog.asksaveasfilename(
+            title="Export preset",
+            defaultextension=".json",
+            initialfile=default_name,
+            filetypes=[("JSON", "*.json")],
+        )
+        if not path:
+            return
+
+        payload = {"name": preset["label"]}
+        for field, _label in PHRASE_LIST_FIELDS:
+            payload[field] = fields.get(field, [])
+        payload["pause_end_pattern"] = fields.get("pause_end_pattern", "")
+        payload["whisper_initial_prompt"] = fields.get("whisper_initial_prompt", "")
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            messagebox.showerror("Export failed", str(exc))
+            return
+
+        messagebox.showinfo("Exported", f"Saved to:\n{path}")
+
+    def _import_profile(self):
+        path = filedialog.askopenfilename(title="Import preset", filetypes=[("JSON", "*.json")])
+        if not path:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                payload = json.load(f)
+        except Exception as exc:
+            messagebox.showerror("Import failed", f"Couldn't read that file:\n{exc}")
+            return
+
+        name = self._prompt_profile_name("Import Profile", initial=str(payload.get("name", "Imported Profile")))
+        if not name:
+            return
+
+        fields = {}
+        for field, _label in PHRASE_LIST_FIELDS:
+            value = payload.get(field, [])
+            fields[field] = [str(v) for v in value] if isinstance(value, list) else []
+        fields["pause_end_pattern"] = str(payload.get("pause_end_pattern", ""))
+        fields["whisper_initial_prompt"] = str(payload.get("whisper_initial_prompt", ""))
+
+        self._create_or_replace_profile(name, fields)
+        self._select_profile_by_key(presets.make_custom_key(name))
 
     # -----------------------------------------------------------
     # Save
     # -----------------------------------------------------------
 
     def _save(self):
-        selected_label = self.preset_var.get()
-        selected_key = self._preset_key_by_label.get(selected_label, presets.DEFAULT_PRESET)
+        selected_key = self._current_preset_key()
 
-        config = dict(self.config)
+        # Re-read from disk rather than starting from self.config (a
+        # snapshot from whenever this tab was built) - other parts of
+        # the app (e.g. the Run tab's Auto Verify/Auto Render checkboxes)
+        # can write to the same config file independently, and starting
+        # from a stale snapshot here would silently revert those.
+        config = app_config.load_config()
         config["preset"] = selected_key
         config["obs_host"] = self.obs_host_var.get().strip()
         config["recording_folder"] = self.recording_folder_var.get().strip()
@@ -495,19 +992,32 @@ class SettingsUI:
         config["verify_device"] = self.verify_device_var.get().strip()
         config["verify_compute_type"] = self.verify_compute_type_var.get().strip()
 
+        config["remote_api_enabled"] = self.remote_api_enabled_var.get()
+
         try:
             config["obs_port"] = int(self.obs_port_var.get().strip())
             config["audio_device_fallback_index"] = int(self.audio_device_fallback_var.get().strip())
+            config["remote_api_port"] = int(self.remote_api_port_var.get().strip())
             config["possible_threshold"] = int(self.possible_threshold_var.get().strip())
             config["save_threshold"] = int(self.save_threshold_var.get().strip())
             config["verified_similarity"] = int(self.verified_similarity_var.get().strip())
             config["verified_confidence"] = float(self.verified_confidence_var.get().strip())
+            caption_style_key = self._current_caption_style_key()
+            caption_style_fields = self._collect_caption_style_fields()
         except ValueError as exc:
             messagebox.showerror("Invalid value", f"One of the numeric fields isn't a valid number:\n{exc}")
             return
 
-        if selected_key == "custom":
-            config["custom_preset"] = self._collect_custom_preset()
+        if presets.is_custom_key(selected_key):
+            profile_name = presets.custom_profile_name(selected_key)
+            config["custom_profiles"] = dict(config.get("custom_profiles", {}))
+            config["custom_profiles"][profile_name] = self._collect_profile_fields()
+
+        config["render_style"] = self._current_render_style_key()
+
+        config["caption_style"] = caption_style_key
+        if caption_style_key == "custom":
+            config["custom_caption_style"] = caption_style_fields
 
         for field, label in (
             ("recording_folder", "Recording folder"),

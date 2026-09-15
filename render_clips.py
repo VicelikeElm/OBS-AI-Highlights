@@ -2,7 +2,9 @@ import json
 import shutil
 import subprocess
 
+import caption_styles
 import config as app_config
+import render_styles
 
 
 # =========================================================
@@ -37,29 +39,22 @@ AUDIO_BITRATE = "192k"
 # CAPTION STYLE
 # =========================================================
 
-# ASS subtitle styling used by FFmpeg.
-#
-# FontSize is deliberately large because we're producing
-# a 1080x1920 vertical video.
-#
-# MarginV keeps captions above the very bottom of the Short
-# so YouTube's UI doesn't cover them.
-
-CAPTION_STYLE = (
-    "FontName=Arial,"
-    "FontSize=24,"
-    "Bold=1,"
-    "PrimaryColour=&H00FFFFFF,"
-    "OutlineColour=&H00000000,"
-    "BackColour=&H80000000,"
-    "BorderStyle=1,"
-    "Outline=3,"
-    "Shadow=1,"
-    "Alignment=2,"
-    "MarginL=90,"
-    "MarginR=90,"
-    "MarginV=300"
+ACTIVE_CAPTION_STYLE = caption_styles.get_style(
+    CONFIG.get("caption_style", caption_styles.DEFAULT_STYLE),
+    CONFIG.get("custom_caption_style"),
 )
+
+# ASS subtitle styling used by FFmpeg. "clean" (the default) reproduces
+# this tool's original hardcoded style exactly - see settings_ui.py's
+# Video Style tab for the other built-ins and the custom option.
+CAPTION_STYLE = caption_styles.build_force_style(ACTIVE_CAPTION_STYLE)
+
+
+# =========================================================
+# RENDER (VIDEO LAYOUT) STYLE
+# =========================================================
+
+RENDER_STYLE_KEY = CONFIG.get("render_style", render_styles.DEFAULT_STYLE)
 
 
 # =========================================================
@@ -386,64 +381,16 @@ def render_job(job):
     # FILTER DESIGN
     # -----------------------------------------------------
     #
-    # Input video
-    #       ↓
-    # split
-    #   ↙       ↘
-    # blurred    normal
-    # vertical   scaled
-    # background foreground
-    #   ↘       ↙
-    #    overlay
-    #       ↓
-    # subtitles
-    #
-    # This keeps the COMPLETE original sermon frame visible.
-    # Nothing important is automatically cropped away.
+    # The actual filter graph is built by render_styles.py, keyed off
+    # the configured RENDER_STYLE_KEY - see that module for the layouts
+    # (blurred background, full crop, or original/letterboxed).
 
-    filter_complex = (
-        "[0:v]"
-        "split=2"
-        "[bg][fg];"
-
-        # -----------------------------------------------
-        # BACKGROUND
-        # -----------------------------------------------
-
-        "[bg]"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:"
-        "force_original_aspect_ratio=increase,"
-        f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
-        "gblur=sigma=35"
-        "[background];"
-
-        # -----------------------------------------------
-        # FOREGROUND
-        # -----------------------------------------------
-
-        "[fg]"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:"
-        "force_original_aspect_ratio=decrease"
-        "[foreground];"
-
-        # -----------------------------------------------
-        # CENTER ORIGINAL VIDEO
-        # -----------------------------------------------
-
-        "[background][foreground]"
-        "overlay="
-        "(W-w)/2:"
-        "(H-h)/2"
-        "[vertical];"
-
-        # -----------------------------------------------
-        # CAPTIONS
-        # -----------------------------------------------
-
-        "[vertical]"
-        f"subtitles='{escaped_srt}':"
-        f"force_style='{CAPTION_STYLE}'"
-        "[final]"
+    filter_complex = render_styles.build_filter_complex(
+        RENDER_STYLE_KEY,
+        OUTPUT_WIDTH,
+        OUTPUT_HEIGHT,
+        escaped_srt,
+        CAPTION_STYLE,
     )
 
     command = [
