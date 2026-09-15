@@ -15,6 +15,7 @@ dist/
 build/
 installer-output/
 .build-tools/
+vendor/
 
 # Anything the tool produces at runtime
 Raw/

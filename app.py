@@ -449,7 +449,8 @@ class MainApp:
             parent,
             text=(
                 "Every detected clip, across every pipeline stage - play it, approve or reject "
-                "a Review clip, render a Verified one on demand, or delete it outright."
+                "a Review clip, render a Verified one on demand, or delete it outright. "
+                "Ctrl+click or Shift+click to select several at once and act on them together."
             ),
             wraplength=680,
         ).pack(anchor="w", pady=(0, 8))
@@ -458,7 +459,9 @@ class MainApp:
         list_frame.pack(fill="both", expand=True)
 
         columns = ("clip", "score", "status", "duration", "rendered")
-        self.clips_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
+        self.clips_tree = ttk.Treeview(
+            list_frame, columns=columns, show="headings", height=8, selectmode="extended"
+        )
         self.clips_tree.heading("clip", text="Clip")
         self.clips_tree.heading("score", text="Score")
         self.clips_tree.heading("status", text="Status")
@@ -542,19 +545,26 @@ class MainApp:
 
         self._clear_clip_detail()
 
-    def _selected_clip_base_name(self):
-        selection = self.clips_tree.selection()
-        if not selection:
-            return None
-        return self._clip_by_iid.get(selection[0])
+    def _selected_clip_base_names(self):
+        return [
+            self._clip_by_iid[iid] for iid in self.clips_tree.selection() if iid in self._clip_by_iid
+        ]
 
     def _on_clip_selected(self):
-        base_name = self._selected_clip_base_name()
-        if not base_name:
+        base_names = self._selected_clip_base_names()
+
+        if not base_names:
             self._clear_clip_detail()
             return
 
-        self._show_clip_detail(clip_manager.get_clip(base_name))
+        if len(base_names) == 1:
+            self._show_clip_detail(clip_manager.get_clip(base_names[0]))
+            return
+
+        self.clip_detail_text.configure(state="normal")
+        self.clip_detail_text.delete("1.0", "end")
+        self.clip_detail_text.insert("1.0", f"{len(base_names)} clips selected.")
+        self.clip_detail_text.configure(state="disabled")
 
     def _show_clip_detail(self, clip):
         lines = []
@@ -588,37 +598,65 @@ class MainApp:
         self.clip_detail_text.configure(state="disabled")
 
     def _play_selected_clip(self):
-        base_name = self._selected_clip_base_name()
-        if not base_name:
+        base_names = self._selected_clip_base_names()
+        if not base_names:
             return
 
-        ok, message = clip_manager.play_clip(base_name)
+        if len(base_names) > 1:
+            messagebox.showinfo("Play", "Select exactly one clip to play.")
+            return
+
+        ok, message = clip_manager.play_clip(base_names[0])
         if not ok:
             messagebox.showerror("Play", message)
 
-    def _approve_selected_clip(self):
-        base_name = self._selected_clip_base_name()
-        if not base_name:
+    def _report_bulk_result(self, action_label, results):
+        """A single clip keeps the old, silent-on-success behavior (only
+        an error dialog on failure) - multi-select bulk actions always
+        show a short summary, since silently skipping some of several
+        selected clips (e.g. approving 3 Review clips when one is
+        already Verified) would otherwise be invisible."""
+        failed = [result for result in results if not result[1]]
+
+        if len(results) == 1:
+            if failed:
+                messagebox.showerror(action_label, failed[0][2])
             return
 
-        ok, message = clip_manager.approve_clip(base_name)
-        if not ok:
-            messagebox.showerror("Approve", message)
+        succeeded_count = len(results) - len(failed)
+        lines = [f"{action_label}: {succeeded_count} of {len(results)} clip(s) succeeded."]
+
+        if failed:
+            lines.append("")
+            lines.append("Not applied to:")
+            for base_name, _ok, message in failed[:8]:
+                lines.append(f"  - {clip_manager.format_clip_label(base_name)}: {message}")
+            if len(failed) > 8:
+                lines.append(f"  ...and {len(failed) - 8} more.")
+
+            messagebox.showwarning(action_label, "\n".join(lines))
+        else:
+            messagebox.showinfo(action_label, "\n".join(lines))
+
+    def _bulk_clip_action(self, action_label, action_fn):
+        base_names = self._selected_clip_base_names()
+        if not base_names:
+            return
+
+        results = [(base_name, *action_fn(base_name)) for base_name in base_names]
+
+        self._report_bulk_result(action_label, results)
         self._refresh_clips_list()
+
+    def _approve_selected_clip(self):
+        self._bulk_clip_action("Approve", clip_manager.approve_clip)
 
     def _reject_selected_clip(self):
-        base_name = self._selected_clip_base_name()
-        if not base_name:
-            return
-
-        ok, message = clip_manager.reject_clip(base_name)
-        if not ok:
-            messagebox.showerror("Reject", message)
-        self._refresh_clips_list()
+        self._bulk_clip_action("Reject", clip_manager.reject_clip)
 
     def _render_selected_clip(self):
-        base_name = self._selected_clip_base_name()
-        if not base_name:
+        base_names = self._selected_clip_base_names()
+        if not base_names:
             return
 
         self.clip_approve_button.configure(state="disabled")
@@ -626,29 +664,42 @@ class MainApp:
         self.clip_render_button.configure(state="disabled", text="Rendering...")
         self.clip_delete_button.configure(state="disabled")
 
-        threading.Thread(target=self._render_clip_worker, args=(base_name,), daemon=True).start()
+        threading.Thread(target=self._render_clips_worker, args=(base_names,), daemon=True).start()
 
-    def _render_clip_worker(self, base_name):
-        try:
-            ok, message = clip_manager.render_clip(base_name)
-        except Exception as error:
-            ok, message = False, f"Unexpected error: {error}"
+    def _render_clips_worker(self, base_names):
+        results = []
 
-        self.clip_render_queue.put((ok, message))
+        for index, base_name in enumerate(base_names, start=1):
+            if len(base_names) > 1:
+                self.clip_render_queue.put(("progress", index, len(base_names)))
+
+            try:
+                ok, message = clip_manager.render_clip(base_name)
+            except Exception as error:
+                ok, message = False, f"Unexpected error: {error}"
+
+            results.append((base_name, ok, message))
+
+        self.clip_render_queue.put(("done", results))
 
     def _poll_clip_render_queue(self):
         try:
             while True:
-                ok, message = self.clip_render_queue.get_nowait()
+                item = self.clip_render_queue.get_nowait()
+
+                if item[0] == "progress":
+                    _tag, index, total = item
+                    self.clip_render_button.configure(text=f"Rendering {index}/{total}...")
+                    continue
+
+                _tag, results = item
 
                 self.clip_approve_button.configure(state="normal")
                 self.clip_reject_button.configure(state="normal")
                 self.clip_render_button.configure(state="normal", text="Render")
                 self.clip_delete_button.configure(state="normal")
 
-                if not ok:
-                    messagebox.showerror("Render", message)
-
+                self._report_bulk_result("Render", results)
                 self._refresh_clips_list()
         except queue.Empty:
             pass
@@ -656,22 +707,27 @@ class MainApp:
         self.root.after(100, self._poll_clip_render_queue)
 
     def _delete_selected_clip(self):
-        base_name = self._selected_clip_base_name()
-        if not base_name:
+        base_names = self._selected_clip_base_names()
+        if not base_names:
             return
 
-        if not messagebox.askyesno(
-            "Delete clip",
-            f"Permanently delete \"{clip_manager.format_clip_label(base_name)}\"?\n\n"
-            "This removes the raw video, its transcript, any Verified/Review record, "
-            "and a rendered Short if one exists. This cannot be undone.",
-        ):
+        if len(base_names) == 1:
+            prompt = (
+                f"Permanently delete \"{clip_manager.format_clip_label(base_names[0])}\"?\n\n"
+                "This removes the raw video, its transcript, any Verified/Review record, "
+                "and a rendered Short if one exists. This cannot be undone."
+            )
+        else:
+            prompt = (
+                f"Permanently delete {len(base_names)} clips?\n\n"
+                "This removes each clip's raw video, transcript, any Verified/Review record, "
+                "and a rendered Short if one exists. This cannot be undone."
+            )
+
+        if not messagebox.askyesno("Delete clip" if len(base_names) == 1 else "Delete clips", prompt):
             return
 
-        ok, message = clip_manager.delete_clip(base_name)
-        if not ok:
-            messagebox.showerror("Delete", message)
-        self._refresh_clips_list()
+        self._bulk_clip_action("Delete", clip_manager.delete_clip)
 
     def _build_updates_tab(self, parent):
         ttk.Label(

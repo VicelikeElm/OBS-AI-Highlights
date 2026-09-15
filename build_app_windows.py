@@ -13,8 +13,12 @@ since this is an unsigned free tool with no signing certificate.
 
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
+import zipfile
 from pathlib import Path
 
 from version import APP_VERSION
@@ -26,6 +30,64 @@ BUILD_ROOT = SOURCE_ROOT / "build"
 
 APP_NAME = "OBSAIHighlights"
 VERSION = APP_VERSION
+
+# A pinned (not the rolling "latest") release from BtbN/FFmpeg-Builds -
+# an LGPL-only static build (no GPL code: x264/x265 are compiled out -
+# see that repo's variants/win64-lgpl.sh) that still includes NVENC
+# (scripts.d/50-ffnvcodec.sh has no LGPL exclusion) and libass (LGPL
+# itself) for the subtitle burn-in, which is everything render_clips.py
+# actually needs. Verified directly against render_styles.py's real
+# filter_complex before being wired in here.
+FFMPEG_RELEASE_TAG = "autobuild-2026-09-15-13-18"
+FFMPEG_ASSET_NAME = "ffmpeg-n9.0.1-30-g9258bacca5-win64-lgpl-9.0.zip"
+FFMPEG_DOWNLOAD_URL = (
+    f"https://github.com/BtbN/FFmpeg-Builds/releases/download/"
+    f"{FFMPEG_RELEASE_TAG}/{FFMPEG_ASSET_NAME}"
+)
+
+# Cached locally, never committed to git - the extracted exe is ~130MB,
+# over GitHub's 100MB push limit, the same reason .build-tools/
+# (PyInstaller itself) isn't committed either.
+VENDOR_FFMPEG_DIR = SOURCE_ROOT / "vendor" / "ffmpeg"
+BUNDLED_FFMPEG_EXE = VENDOR_FFMPEG_DIR / "ffmpeg.exe"
+
+
+def _ensure_bundled_ffmpeg():
+    """Downloads and caches the pinned ffmpeg build (see above) so the
+    installed app never needs ffmpeg on PATH. A no-op after the first
+    build - render_clips.py's own ffmpeg check still falls back to PATH
+    if this vendor copy is ever missing (e.g. running from source)."""
+    if BUNDLED_FFMPEG_EXE.exists():
+        print(f"Using cached ffmpeg: {BUNDLED_FFMPEG_EXE}")
+        return
+
+    print()
+    print(f"Downloading ffmpeg (one-time, ~160MB): {FFMPEG_ASSET_NAME}")
+
+    VENDOR_FFMPEG_DIR.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        zip_path = Path(temp_dir) / FFMPEG_ASSET_NAME
+
+        urllib.request.urlretrieve(FFMPEG_DOWNLOAD_URL, zip_path)
+
+        with zipfile.ZipFile(zip_path) as archive:
+            exe_member = next(
+                name for name in archive.namelist() if name.endswith("/bin/ffmpeg.exe")
+            )
+            license_member = next(
+                name for name in archive.namelist() if name.endswith("/LICENSE.txt")
+            )
+
+            with archive.open(exe_member) as source, open(BUNDLED_FFMPEG_EXE, "wb") as dest:
+                shutil.copyfileobj(source, dest)
+
+            with archive.open(license_member) as source, open(
+                VENDOR_FFMPEG_DIR / "FFMPEG-LICENSE.txt", "wb"
+            ) as dest:
+                shutil.copyfileobj(source, dest)
+
+    print(f"ffmpeg cached at: {BUNDLED_FFMPEG_EXE}")
 
 
 def _run(command):
@@ -88,6 +150,13 @@ def _pyinstaller_command():
     assets_dir = SOURCE_ROOT / "assets"
     if assets_dir.exists():
         command.extend(["--add-data", f"{assets_dir};assets"])
+
+    if BUNDLED_FFMPEG_EXE.exists():
+        command.extend(["--add-data", f"{BUNDLED_FFMPEG_EXE};."])
+
+    ffmpeg_license = VENDOR_FFMPEG_DIR / "FFMPEG-LICENSE.txt"
+    if ffmpeg_license.exists():
+        command.extend(["--add-data", f"{ffmpeg_license};."])
 
     command.append(str(SOURCE_ROOT / "app.py"))
 
@@ -169,6 +238,7 @@ def main():
     print(f"OBS AI HIGHLIGHTS - WINDOWS BUILD v{VERSION}")
     print("=" * 70)
 
+    _ensure_bundled_ffmpeg()
     _run(_pyinstaller_command())
     _verify_outputs()
     _build_installer_if_available()

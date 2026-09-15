@@ -1,6 +1,8 @@
 import json
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 
 import caption_styles
 import config as app_config
@@ -35,6 +37,28 @@ NVENC_PRESET = "p5"
 CQ = "20"
 
 AUDIO_BITRATE = "192k"
+
+
+def _ffmpeg_executable():
+    """Path to ffmpeg.exe - the bundled copy build_app_windows.py packages
+    next to a frozen install (see its _ensure_bundled_ffmpeg()), if
+    present, otherwise plain "ffmpeg" on PATH (dev-mode, or a frozen
+    build that somehow shipped without one - falls back instead of
+    hard-failing here)."""
+
+    if getattr(sys, "frozen", False):
+
+        bundled = Path(
+            getattr(sys, "_MEIPASS", "")
+        ) / "ffmpeg.exe"
+
+        if bundled.exists():
+            return str(bundled)
+
+    return "ffmpeg"
+
+
+FFMPEG_EXECUTABLE = _ffmpeg_executable()
 
 
 # =========================================================
@@ -502,7 +526,7 @@ def render_job(job):
     )
 
     command = [
-        "ffmpeg",
+        FFMPEG_EXECUTABLE,
 
         "-y",
 
@@ -648,11 +672,11 @@ def main():
     )
     print("=" * 70)
 
-    if shutil.which("ffmpeg") is None:
+    if FFMPEG_EXECUTABLE == "ffmpeg" and shutil.which("ffmpeg") is None:
 
         print()
         print(
-            "ERROR: ffmpeg was not found on PATH."
+            "ERROR: ffmpeg was not found."
         )
         print(
             "Install it from https://ffmpeg.org/download.html "

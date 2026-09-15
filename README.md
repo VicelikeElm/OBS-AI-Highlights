@@ -55,6 +55,8 @@ Highlights** from the Start Menu. One window, five tabs:
   Reject a Review clip (non-destructive - nothing is deleted, so a
   reject is easy to undo), Render a Verified one right now instead of
   waiting for the next batch, or Delete a clip you don't want outright.
+  Ctrl+click/Shift+click to select several clips and approve, reject,
+  render, or delete them all at once.
 - **Sessions** — every capture run is tracked as a session: how many
   moments were analyzed, how many were ignored/possible/saved, the
   average score, and which phrases were actually most responsible for
@@ -68,13 +70,17 @@ Highlights** from the Start Menu. One window, five tabs:
 - **Updates** — checks automatically on launch, or on demand, and can
   download and install a newer version without leaving the app.
 
-Prerequisites the installer doesn't bundle:
-- An NVIDIA GPU + driver for the default (CUDA) Whisper settings - switch
-  `whisper_device`/`verify_device` to `cpu` in Settings if you don't have
-  one.
-- [ffmpeg](https://ffmpeg.org/download.html) on your PATH (used for the
-  final vertical-video render step). The app will tell you clearly if it's
-  missing rather than failing silently.
+ffmpeg is bundled with the installer (an LGPL-only static build - see
+[Third-party licenses](#third-party-licenses) below), so there's nothing to
+install separately for rendering. If it's ever missing (e.g. running from
+source without it on PATH), the app tells you clearly rather than failing
+silently.
+
+The one real prerequisite: an NVIDIA GPU + driver, for the default (CUDA)
+Whisper transcription and the NVENC video encoder used when rendering -
+switch `whisper_device`/`verify_device` to `cpu` in Settings if you don't
+have one (the render step's encoder isn't currently configurable, so it
+still needs NVENC either way).
 
 Settings live in `%APPDATA%\OBS AI Highlights\` (`highlight_config.json` +
 `.env` for the OBS password) - separate from wherever the app itself is
@@ -135,8 +141,24 @@ doesn't pollute a shared venv):
 python build_app_windows.py
 ```
 
-Produces `dist/OBSAIHighlights/` (the packaged app) and
-`installer-output/OBSAIHighlights-Setup-vX.Y.Z.exe`.
+The first run also downloads and caches a static ffmpeg build (~160MB,
+see below) under `vendor/ffmpeg/` - not committed to git, same as
+PyInstaller's own build tooling. Produces `dist/OBSAIHighlights/` (the
+packaged app) and `installer-output/OBSAIHighlights-Setup-vX.Y.Z.exe`.
+
+## Third-party licenses
+
+The installer bundles an LGPL-only static build of
+[ffmpeg](https://ffmpeg.org/) from
+[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) - GPL-licensed
+components (libx264, libx265, ...) are compiled out; NVENC hardware
+encoding and libass (subtitle burn-in) are compiled in, since that's
+everything this tool's own rendering actually uses. `ffmpeg`'s LGPLv3 text
+ships alongside it (`vendor/ffmpeg/FFMPEG-LICENSE.txt` in this repo,
+`FFMPEG-LICENSE.txt` next to the installed app). ffmpeg's own source is
+available from [ffmpeg.org](https://ffmpeg.org/download.html); this
+specific build's source is available from
+[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds).
 
 ## Status
 
