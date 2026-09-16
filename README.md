@@ -1,5 +1,9 @@
 # OBS AI Highlights
 
+[![Latest release](https://img.shields.io/github/v/release/VicelikeElm/OBS-AI-Highlights?label=latest%20release)](https://github.com/VicelikeElm/OBS-AI-Highlights/releases/latest)
+
+**[Download the latest Windows installer](https://github.com/VicelikeElm/OBS-AI-Highlights/releases/latest)** - grab the `.exe` from the Assets section of the latest release.
+
 Built by [Vice Media Solutions](assets/vivce_media_solutions.png).
 
 Watches OBS's replay buffer during a live stream, uses a live Whisper
