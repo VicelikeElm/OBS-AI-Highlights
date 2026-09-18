@@ -50,6 +50,23 @@ original resolution, untouched otherwise; the `.srt` caption file is
 always saved in `Verified/` regardless, so you still have the caption
 text/timing to use elsewhere even with burn-in off.
 
+Video layouts (Settings → Video Style → Video layout): **Blurred
+Background** (the default - the whole frame over a blurred copy of
+itself), **Full Crop** (a fixed slice from the middle of the frame),
+**Original (letterboxed)**, and two that look at each clip before
+framing it:
+
+- **Follow Speaker Crop** - a full-screen crop that follows the speaker
+  as they move, instead of cutting a fixed slice from the middle.
+- **Speaker + Lower Panel** - the speaker on top and the scene's lower
+  panel (scripture, lyrics, a lower third) underneath while it's on
+  screen; a full-screen follow crop the rest of the time.
+
+Both follow the speaker by where things move on a static camera, and pan
+only when the speaker has moved off-centre for several seconds. If a clip
+can't be analyzed they fall back to Blurred Background, so a clip is never
+skipped over a layout problem.
+
 Each stage can run on its own, or all three from one app - see below.
 
 ## Easy install (Windows)

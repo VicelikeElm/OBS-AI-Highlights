@@ -6,6 +6,7 @@ from pathlib import Path
 
 import caption_styles
 import config as app_config
+import layout_analysis
 import presets
 import ready_metadata
 import render_styles
@@ -293,26 +294,54 @@ def escape_subtitle_path(path):
     return text
 
 
-def build_video_filter(escaped_srt):
+def _subtitles_filter(escaped_srt, size):
+    """The caption burn-in filter. original_size tells libass the real
+    shape of the picture it's drawing on - without it the text is
+    stretched by libass's 4:3 caption canvas (see caption_styles.py)."""
+
+    original_size = (
+        f":original_size={size[0]}x{size[1]}"
+        if size
+        else ""
+    )
+
+    return (
+        f"subtitles='{escaped_srt}'{original_size}:force_style='{CAPTION_STYLE}'"
+    )
+
+
+def build_video_filter(escaped_srt, plan=None, style_key=None, source_size=None):
     """(filter_complex_or_None, map_target) for the ffmpeg command's
     -filter_complex/-map pair, from the independent BURN_IN_CAPTIONS and
     APPLY_VERTICAL_LAYOUT toggles. filter_complex is None when neither is
     enabled - no filtering is needed at all, so the raw video stream maps
-    straight through to the encoder untouched (just the trim applied)."""
+    straight through to the encoder untouched (just the trim applied).
+
+    plan is the clip's layout_analysis result, for the styles that need
+    one; style_key defaults to the configured RENDER_STYLE_KEY (render_job
+    passes the blurred-background fallback when analysis failed);
+    source_size is the raw video's (width, height), only used to size the
+    captions when the vertical layout is off."""
+
+    if style_key is None:
+        style_key = RENDER_STYLE_KEY
 
     if APPLY_VERTICAL_LAYOUT:
 
         video_chain = render_styles.build_video_chain(
-            RENDER_STYLE_KEY,
+            style_key,
             OUTPUT_WIDTH,
             OUTPUT_HEIGHT,
+            plan,
         )
 
         if BURN_IN_CAPTIONS:
 
             filter_complex = (
                 video_chain
-                + f";[vertical]subtitles='{escaped_srt}':force_style='{CAPTION_STYLE}'[final]"
+                + ";[vertical]"
+                + _subtitles_filter(escaped_srt, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                + "[final]"
             )
 
             return filter_complex, "[final]"
@@ -322,12 +351,58 @@ def build_video_filter(escaped_srt):
     if BURN_IN_CAPTIONS:
 
         filter_complex = (
-            f"[0:v]subtitles='{escaped_srt}':force_style='{CAPTION_STYLE}'[final]"
+            "[0:v]"
+            + _subtitles_filter(escaped_srt, source_size)
+            + "[final]"
         )
 
         return filter_complex, "[final]"
 
     return None, "0:v"
+
+
+def plan_layout(raw_video, trim_start, duration):
+    """(style_key, plan) to render this clip with. The follow styles look
+    at the clip's frames first; if that can't be done (or fails outright),
+    the clip is rendered with the default layout, which crops nothing -
+    a clip is never skipped or failed over a layout problem."""
+
+    if not APPLY_VERTICAL_LAYOUT or not render_styles.needs_analysis(RENDER_STYLE_KEY):
+        return RENDER_STYLE_KEY, None
+
+    plan = None
+
+    try:
+
+        plan = layout_analysis.analyze(
+            FFMPEG_EXECUTABLE,
+            raw_video,
+            trim_start,
+            duration,
+            want_panel=(RENDER_STYLE_KEY == "stacked"),
+        )
+
+    except Exception as error:
+
+        print(f"Layout analysis failed: {error}")
+
+    if plan is None:
+
+        fallback = render_styles.DEFAULT_STYLE
+
+        print(
+            f"Layout: could not analyze this clip - using "
+            f"{render_styles.get_style(fallback)['label']} instead."
+        )
+
+        return fallback, None
+
+    print(
+        f"Layout: {render_styles.get_style(RENDER_STYLE_KEY)['label']} "
+        f"({layout_analysis.describe(plan)})"
+    )
+
+    return RENDER_STYLE_KEY, plan
 
 
 # =========================================================
@@ -672,11 +747,33 @@ def render_job(job):
     #
     # The actual filter graph is built by render_styles.py, keyed off
     # the configured RENDER_STYLE_KEY - see that module for the layouts
-    # (blurred background, full crop, or original/letterboxed). Both the
-    # vertical layout and the caption burn-in are independently optional
-    # (BURN_IN_CAPTIONS / APPLY_VERTICAL_LAYOUT) - see build_video_filter().
+    # (blurred background, full crop, original/letterboxed, or the two
+    # follow layouts, which plan_layout() analyzes the clip for first).
+    # Both the vertical layout and the caption burn-in are independently
+    # optional (BURN_IN_CAPTIONS / APPLY_VERTICAL_LAYOUT) - see
+    # build_video_filter().
 
-    filter_complex, video_map_target = build_video_filter(escaped_srt)
+    style_key, plan = plan_layout(
+        raw_video,
+        trim_start,
+        duration
+    )
+
+    source_size = None
+
+    if BURN_IN_CAPTIONS and not APPLY_VERTICAL_LAYOUT:
+
+        source_size = layout_analysis.probe_video_size(
+            FFMPEG_EXECUTABLE,
+            raw_video
+        )
+
+    filter_complex, video_map_target = build_video_filter(
+        escaped_srt,
+        plan,
+        style_key,
+        source_size,
+    )
 
     command = [
         FFMPEG_EXECUTABLE,

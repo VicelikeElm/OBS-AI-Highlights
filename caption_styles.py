@@ -135,21 +135,53 @@ def hex_to_ass_color(hex_color, opacity=100):
     return f"&H{alpha:02X}{b.upper()}{g.upper()}{r.upper()}"
 
 
+# libass measures SRT captions on a 384x288 canvas and scales that canvas
+# up to the video (x6.67 on a 1920-tall Short). Style numbers handed to it
+# as if they were pixels are read against that small canvas, so a 300
+# bottom margin sits off the bottom of the frame and the captions are never
+# drawn. Everything below converts from the numbers people see in Settings
+# - written for the 1080x1920 Short - to the canvas libass actually uses.
+# (The subtitles filter also needs original_size=1080x1920, so the text
+# isn't stretched by the canvas's 4:3 shape - see render_clips.py.)
+LIBASS_CANVAS_WIDTH = 384
+LIBASS_CANVAS_HEIGHT = 288
+SHORT_WIDTH = 1080
+SHORT_HEIGHT = 1920
+
+# Settings' font size is on the scale the built-in styles were written
+# for (Clean = 24), which comes out to about 60 pixels tall on a Short.
+FONT_SIZE_PIXELS = 2.5
+
+
+def _vertical_units(pixels):
+    return round(pixels * LIBASS_CANVAS_HEIGHT / SHORT_HEIGHT, 2)
+
+
+def _horizontal_units(pixels):
+    return round(pixels * LIBASS_CANVAS_WIDTH / SHORT_WIDTH)
+
+
 def build_force_style(style):
     background_enabled = style.get("background_enabled", False)
 
+    font_size = _vertical_units(style.get("font_size", 24) * FONT_SIZE_PIXELS)
+    outline = _vertical_units(style.get("outline_width", 3))
+    shadow = _vertical_units(style.get("shadow", 1))
+    margin_h = _horizontal_units(style.get("margin_h", 90))
+    margin_v = round(_vertical_units(style.get("margin_v", 300)))
+
     return (
         f"FontName={style.get('font_name', 'Arial')},"
-        f"FontSize={style.get('font_size', 24)},"
+        f"FontSize={font_size},"
         f"Bold={1 if style.get('bold', True) else 0},"
         f"PrimaryColour={hex_to_ass_color(style.get('text_color', '#FFFFFF'))},"
         f"OutlineColour={hex_to_ass_color(style.get('outline_color', '#000000'))},"
         f"BackColour={hex_to_ass_color(style.get('background_color', '#000000'), style.get('background_opacity', 50))},"
         f"BorderStyle={3 if background_enabled else 1},"
-        f"Outline={style.get('outline_width', 3)},"
-        f"Shadow={style.get('shadow', 1)},"
+        f"Outline={outline},"
+        f"Shadow={shadow},"
         f"Alignment={POSITION_ALIGNMENT.get(style.get('position', 'bottom'), 2)},"
-        f"MarginL={style.get('margin_h', 90)},"
-        f"MarginR={style.get('margin_h', 90)},"
-        f"MarginV={style.get('margin_v', 300)}"
+        f"MarginL={margin_h},"
+        f"MarginR={margin_h},"
+        f"MarginV={margin_v}"
     )
