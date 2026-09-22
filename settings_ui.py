@@ -111,6 +111,97 @@ COMPUTE_TYPE_OPTIONS = (
     "int8_bfloat16",
 )
 
+# (label, config key, lowest, highest) - the same limits the Spinboxes
+# advertise. A Spinbox only *suggests* its range: anything typed in is
+# accepted as-is, so Save has to check it (validate_settings below).
+NUMERIC_LIMITS = (
+    ("OBS WebSocket port", "obs_port", 1, 65535),
+    ("Remote API port", "remote_api_port", 1024, 65535),
+    ("Audio device fallback index", "audio_device_fallback_index", 0, 999),
+    ("Possible-clip threshold", "possible_threshold", 0, 100),
+    ("Save-clip threshold", "save_threshold", 0, 100),
+    ("Verified similarity", "verified_similarity", 0, 100),
+    ("Verified confidence", "verified_confidence", 0.0, 1.0),
+    ("Moderate spike ratio", "audio_excitement_moderate_ratio", 1.0, 5.0),
+    ("Strong spike ratio", "audio_excitement_strong_ratio", 1.0, 5.0),
+    ("Moderate spike bonus", "audio_excitement_moderate_bonus", 0, 50),
+    ("Strong spike bonus", "audio_excitement_strong_bonus", 0, 50),
+)
+
+CAPTION_LIMITS = (
+    ("Caption font size", "font_size", 10, 72),
+    ("Caption max words/line", "max_words_per_line", 1, 15),
+    ("Caption horizontal margin", "margin_h", 0, 300),
+    ("Caption vertical margin", "margin_v", 0, 600),
+    ("Caption outline width", "outline_width", 0, 10),
+    ("Caption shadow", "shadow", 0, 5),
+    ("Caption background opacity", "background_opacity", 0, 100),
+)
+
+# What a CPU can actually run (ctranslate2.get_supported_compute_types
+# ("cpu")) - the fallback if that can't be asked.
+CPU_COMPUTE_TYPES = ("float32", "int8", "int8_float32")
+
+
+def _cpu_compute_types():
+    try:
+        import ctranslate2
+
+        return tuple(sorted(ctranslate2.get_supported_compute_types("cpu")))
+    except Exception:
+        return CPU_COMPUTE_TYPES
+
+
+def validate_settings(config, caption_style_key=None, caption_style_fields=None):
+    """Everything wrong with a settings dict about to be saved, as a list of
+    plain-language problems (empty when it's fine). Save runs this so a typo
+    in a number box can't quietly save something the pipeline then chokes
+    on - e.g. a port outside 0-65535 stops Highlight Capture from starting
+    at all, and a "possible" threshold above the "save" one makes clips that
+    meet the Save threshold get ignored."""
+
+    problems = []
+
+    for label, key, low, high in NUMERIC_LIMITS:
+        value = config.get(key)
+
+        if value is not None and not low <= value <= high:
+            problems.append(f"{label} must be between {low} and {high} (it's {value}).")
+
+    if config.get("possible_threshold", 0) > config.get("save_threshold", 100):
+        problems.append(
+            "The Possible-clip threshold can't be higher than the Save-clip threshold - "
+            "a moment that meets the Save threshold would be ignored."
+        )
+
+    if config.get("audio_excitement_moderate_ratio", 0) > config.get("audio_excitement_strong_ratio", 99):
+        problems.append("The Moderate spike ratio can't be higher than the Strong spike ratio.")
+
+    if caption_style_key == "custom" and caption_style_fields:
+        for label, key, low, high in CAPTION_LIMITS:
+            value = caption_style_fields.get(key)
+
+            if value is not None and not low <= value <= high:
+                problems.append(f"{label} must be between {low} and {high} (it's {value}).")
+
+    for label, device_key, compute_key in (
+        ("Whisper (live capture)", "whisper_device", "whisper_compute_type"),
+        ("Verify (second pass)", "verify_device", "verify_compute_type"),
+    ):
+        if config.get(device_key) != "cpu":
+            continue
+
+        supported = _cpu_compute_types()
+
+        if config.get(compute_key) not in supported:
+            problems.append(
+                f"{label}: a CPU can't run the {config.get(compute_key)} compute type, and the model "
+                f"would fail to load. Use one of: {', '.join(supported)}."
+            )
+
+    return problems
+
+
 SCENE_ACTION_LABELS = {
     "pause": "Pause clipping",
     "ignore": "Ignore entirely",
@@ -1455,6 +1546,15 @@ class SettingsUI:
             messagebox.showerror("Invalid value", f"One of the numeric fields isn't a valid number:\n{exc}")
             return
 
+        problems = validate_settings(config, caption_style_key, caption_style_fields)
+
+        if problems:
+            messagebox.showerror(
+                "Can't save yet",
+                "These settings need fixing first:\n\n" + "\n".join(f"- {p}" for p in problems),
+            )
+            return
+
         if presets.is_custom_key(selected_key):
             profile_name = presets.custom_profile_name(selected_key)
             config["custom_profiles"] = dict(config.get("custom_profiles", {}))
@@ -1496,7 +1596,13 @@ class SettingsUI:
 
         app_config.save_config(config)
         self.config = config
-        messagebox.showinfo("Saved", "Settings saved.")
+        messagebox.showinfo(
+            "Saved",
+            "Settings saved.\n\n"
+            "Video layout, captions and encoder apply to the next render. "
+            "Highlight Capture and Verify use the new settings the next time they start, "
+            "and a changed recording/output folder needs the app restarted.",
+        )
 
 
 def main():

@@ -28,8 +28,9 @@ READY_FOLDER = SHORTS_ROOT / "Ready"
 OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
 
-# Encoding
-RENDER_ENCODER = CONFIG.get("render_encoder", app_config.DEFAULTS["render_encoder"])
+# Encoding - RENDER_ENCODER (the saved setting) is filled in by
+# refresh_settings() below, along with the other render settings.
+RENDER_ENCODER = None
 
 # NVENC quality setting
 NVENC_PRESET = "p5"
@@ -173,55 +174,94 @@ def encoder_in_use():
 
 
 # =========================================================
-# READY-TO-POST METADATA
+# RENDER SETTINGS (encoder, metadata, captions, layout)
 # =========================================================
 
-ACTIVE_PRESET = presets.get_preset(
-    CONFIG.get("preset", presets.DEFAULT_PRESET),
-    CONFIG.get("custom_profiles"),
-)
+def refresh_settings():
+    """(Re)reads every saved setting that changes how a clip is rendered:
+    the encoder, the preset behind the ready-to-post metadata, the caption
+    style and burn-in switch, and the video layout.
 
-# The same phrase lists driving detection are reused to find the
-# "strongest" sentence in a clip's own transcript - see ready_metadata.py.
-METADATA_PHRASE_LISTS = (
-    ACTIVE_PRESET["strong_phrases"],
-    ACTIVE_PRESET["application_phrases"],
-    ACTIVE_PRESET["reference_phrases"],
-)
+    This runs once when the module is imported, which is all a worker
+    process (`app.py --worker render`, what the Run tab starts) ever
+    needs - it's a fresh process, so it always sees the current settings.
+    But the Clips tab's Render button renders inside the running app
+    (clip_manager.render_clip), whose copy of this module was imported at
+    startup - so a setting changed and saved in Settings afterwards (turn
+    caption burn-in off, pick another caption style or layout) would be
+    silently ignored until the app was restarted. clip_manager.render_clip
+    calls this before every render so it never is.
 
-METADATA_HASHTAGS = ACTIVE_PRESET.get("hashtags", [])
+    Deliberately doesn't touch the Raw/Verified/Ready folders: clip_manager
+    resolves its own copies of those once, and the two must keep agreeing
+    on where a clip lives."""
+
+    global CONFIG, RENDER_ENCODER, ACTIVE_PRESET, METADATA_PHRASE_LISTS
+    global METADATA_HASHTAGS, ACTIVE_CAPTION_STYLE, CAPTION_STYLE
+    global RENDER_STYLE_KEY, BURN_IN_CAPTIONS, APPLY_VERTICAL_LAYOUT
+    global _resolved_encoder, _video_encode_args
+
+    CONFIG = app_config.load_config()
+
+    encoder = CONFIG.get("render_encoder", app_config.DEFAULTS["render_encoder"])
+
+    if encoder != RENDER_ENCODER:
+        RENDER_ENCODER = encoder
+
+        # The NVENC probe result is only valid for the encoder it was
+        # made for - see _get_video_encode_args().
+        _resolved_encoder = None
+        _video_encode_args = None
+
+    # READY-TO-POST METADATA
+
+    ACTIVE_PRESET = presets.get_preset(
+        CONFIG.get("preset", presets.DEFAULT_PRESET),
+        CONFIG.get("custom_profiles"),
+    )
+
+    # The same phrase lists driving detection are reused to find the
+    # "strongest" sentence in a clip's own transcript - see
+    # ready_metadata.py.
+    METADATA_PHRASE_LISTS = (
+        ACTIVE_PRESET["strong_phrases"],
+        ACTIVE_PRESET["application_phrases"],
+        ACTIVE_PRESET["reference_phrases"],
+    )
+
+    METADATA_HASHTAGS = ACTIVE_PRESET.get("hashtags", [])
+
+    # CAPTION STYLE
+
+    ACTIVE_CAPTION_STYLE = caption_styles.get_style(
+        CONFIG.get("caption_style", caption_styles.DEFAULT_STYLE),
+        CONFIG.get("custom_caption_style"),
+    )
+
+    # ASS subtitle styling used by FFmpeg. "clean" (the default) reproduces
+    # this tool's original hardcoded style exactly - see settings_ui.py's
+    # Video Style tab for the other built-ins and the custom option.
+    CAPTION_STYLE = caption_styles.build_force_style(ACTIVE_CAPTION_STYLE)
+
+    # RENDER (VIDEO LAYOUT) STYLE
+
+    RENDER_STYLE_KEY = CONFIG.get("render_style", render_styles.DEFAULT_STYLE)
+
+    # Independent on/off switches for the two things this tool otherwise
+    # does to every clip automatically - so someone who wants to finish a
+    # clip their own way (their own captions, their own crop, another
+    # editor entirely) isn't stuck with this tool's opinions baked in.
+    # Both default True, preserving the only behavior this tool has ever
+    # had.
+    BURN_IN_CAPTIONS = CONFIG.get(
+        "burn_in_captions", app_config.DEFAULTS["burn_in_captions"]
+    )
+    APPLY_VERTICAL_LAYOUT = CONFIG.get(
+        "apply_vertical_layout", app_config.DEFAULTS["apply_vertical_layout"]
+    )
 
 
-# =========================================================
-# CAPTION STYLE
-# =========================================================
-
-ACTIVE_CAPTION_STYLE = caption_styles.get_style(
-    CONFIG.get("caption_style", caption_styles.DEFAULT_STYLE),
-    CONFIG.get("custom_caption_style"),
-)
-
-# ASS subtitle styling used by FFmpeg. "clean" (the default) reproduces
-# this tool's original hardcoded style exactly - see settings_ui.py's
-# Video Style tab for the other built-ins and the custom option.
-CAPTION_STYLE = caption_styles.build_force_style(ACTIVE_CAPTION_STYLE)
-
-
-# =========================================================
-# RENDER (VIDEO LAYOUT) STYLE
-# =========================================================
-
-RENDER_STYLE_KEY = CONFIG.get("render_style", render_styles.DEFAULT_STYLE)
-
-# Independent on/off switches for the two things this tool otherwise does
-# to every clip automatically - so someone who wants to finish a clip
-# their own way (their own captions, their own crop, another editor
-# entirely) isn't stuck with this tool's opinions baked in. Both default
-# True, preserving the only behavior this tool has ever had.
-BURN_IN_CAPTIONS = CONFIG.get("burn_in_captions", app_config.DEFAULTS["burn_in_captions"])
-APPLY_VERTICAL_LAYOUT = CONFIG.get(
-    "apply_vertical_layout", app_config.DEFAULTS["apply_vertical_layout"]
-)
+refresh_settings()
 
 
 # =========================================================

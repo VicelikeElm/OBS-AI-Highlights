@@ -121,11 +121,13 @@ def _make_handler(state):
 def start_server(state, port):
     """Starts the API server on a daemon thread, bound to 127.0.0.1 only.
     Returns the server (call .shutdown() to stop it), or None if the
-    port couldn't be bound (e.g. already in use) - non-fatal, capture
-    keeps running without remote control rather than crashing."""
+    port couldn't be bound (already in use, or not a valid port number at
+    all - a value outside 0-65535 raises OverflowError, not OSError) -
+    non-fatal, capture keeps running without remote control rather than
+    crashing."""
     try:
         server = ThreadingHTTPServer(("127.0.0.1", port), _make_handler(state))
-    except OSError:
+    except (OSError, OverflowError):
         return None
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)

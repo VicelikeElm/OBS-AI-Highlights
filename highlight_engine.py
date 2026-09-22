@@ -58,11 +58,15 @@ ACTIVE_PRESET = presets.get_preset(
     CONFIG.get("custom_profiles"),
 )
 
-# Read once at startup, same as every other config value here - toggling
-# these in the app while a capture is already running takes effect on
-# the next run, not mid-session.
-AUTO_VERIFY = bool(CONFIG.get("auto_verify", True))
-AUTO_RENDER = bool(CONFIG.get("auto_render", True))
+def auto_step_enabled(key):
+    """Whether "auto_verify" / "auto_render" is on *right now*. Unlike the
+    rest of the config here (read once at startup), these two are checked
+    when the post-capture step is actually reached: the Run tab's checkboxes
+    save the moment they're clicked, and a capture can run for hours - so
+    turning Auto Render off partway through a service has to stop the
+    render at the end of it, not just from the next run."""
+    return bool(app_config.load_config().get(key, True))
+
 
 REMOTE_API_ENABLED = bool(CONFIG.get("remote_api_enabled", True))
 REMOTE_API_PORT = int(CONFIG.get("remote_api_port", 8756))
@@ -1762,13 +1766,14 @@ def run_live_sermon(
     )
 
     # -----------------------------------------------------
-    # LOAD SMALL MODEL
+    # LOAD LIVE MODEL (the "whisper_model" setting - "small" by default)
     # -----------------------------------------------------
 
     log()
     log(
         "Loading live Whisper "
-        "model: small"
+        f"model: {WHISPER_MODEL} "
+        f"({WHISPER_DEVICE}, {WHISPER_COMPUTE_TYPE})"
     )
 
     model = WhisperModel(
@@ -2824,7 +2829,7 @@ def run_quality_processor():
     # MEDIUM WHISPER VERIFICATION
     # =====================================================
 
-    if not AUTO_VERIFY:
+    if not auto_step_enabled("auto_verify"):
 
         log()
         log(
@@ -2834,9 +2839,17 @@ def run_quality_processor():
 
         return True
 
+    # The verify step runs as its own fresh process, which loads whatever
+    # "verify_model" is saved as - name that model here rather than a
+    # hardcoded "Medium" that stays put when the setting changes.
+    verify_model = app_config.load_config().get(
+        "verify_model",
+        app_config.DEFAULTS["verify_model"]
+    )
+
     verified = run_post_service_program(
         "verify",
-        "MEDIUM WHISPER VERIFICATION"
+        f"WHISPER VERIFICATION ({verify_model.upper()} MODEL)"
     )
 
     if not verified:
@@ -2863,7 +2876,7 @@ def run_quality_processor():
     # VERTICAL SHORT RENDERING
     # =====================================================
 
-    if not AUTO_RENDER:
+    if not auto_step_enabled("auto_render"):
 
         log()
         log(

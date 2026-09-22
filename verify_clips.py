@@ -2241,7 +2241,8 @@ def main():
     )
 
     print(
-        f"Model: {VERIFY_MODEL}"
+        f"Model: {VERIFY_MODEL} "
+        f"({VERIFY_DEVICE}, {VERIFY_COMPUTE_TYPE})"
     )
 
     model = WhisperModel(

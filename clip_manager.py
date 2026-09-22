@@ -445,6 +445,12 @@ def render_clip(base_name):
 
     render_clips.READY_FOLDER.mkdir(parents=True, exist_ok=True)
 
+    # This runs inside the app, whose copy of render_clips was set up at
+    # startup - pick up any render settings saved since (caption burn-in,
+    # caption style, layout, encoder), or a re-render would silently
+    # keep using the old ones.
+    render_clips.refresh_settings()
+
     if render_clips.render_job(job):
         return True, "Rendered."
 
