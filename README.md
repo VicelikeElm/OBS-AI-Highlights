@@ -75,11 +75,20 @@ Run the installer (`OBSAIHighlights-Setup-vX.Y.Z.exe`) and launch **OBS AI
 Highlights** from the Start Menu. One window, five tabs:
 
 - **Run** — a quick-start checklist reminds you to start OBS Replay
-  Buffer, choose a preset if needed, then start capture. Plain-language
-  status messages explain what the app is doing and where to go next.
+  Buffer, recording, or streaming, choose a preset if needed, then start
+  capture. Plain-language status messages explain what the app is doing
+  and where to go next.
   Automatic clip preparation and rendering can be enabled here; manual
-  actions remain available, and technical activity details are hidden
-  until requested. The Run tab also reports a detected supported game
+  actions remain available. A short, friendly activity feed shows
+  important progress and warnings, while full technical details stay
+  hidden until requested. Use **Check setup** to expand a checklist for the
+  OBS connection, selected audio device, and recording/output folders before
+  capture. Missing Tesseract is listed as optional for game-event OCR.
+  The check is advisory and doesn't prevent capture from waiting for OBS
+  to become active. New installations get a short setup guide, and a
+  **Review clips** shortcut appears when clips are available. Empty Clips
+  and Sessions views explain what to do next. The Run tab also reports a
+  detected supported game
   and its profile; Rainbow Six Siege detection is included as the first
   game profile. During capture, the optional game-event engine OCRs a
   configurable primary-display region, scores recognized events and

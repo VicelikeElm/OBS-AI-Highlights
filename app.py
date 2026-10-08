@@ -18,7 +18,9 @@ itself once frozen (see config.worker_launch_command()).
 import os
 import sys
 import json
+import importlib
 import queue
+import shutil
 import tempfile
 import threading
 import subprocess
@@ -79,6 +81,221 @@ def _select_update_asset(assets):
             if name.startswith(prefix) and name.endswith(".exe"):
                 return asset.get("browser_download_url"), asset.get("size")
     return None, None
+
+
+def _friendly_activity_message(text):
+    """Return a short user-facing activity message for meaningful worker output."""
+    line = text.strip()
+    if not line:
+        return None
+
+    lower_line = line.lower()
+    if line.startswith("--- Failed to start "):
+        details = line[len("--- Failed to start "):].strip()
+        if details.endswith("---"):
+            details = details[:-3].rstrip()
+        return f"Couldn't start {details}"
+    if line.startswith("WARNING:"):
+        return f"Needs attention: {line[len('WARNING:'):].strip()}"
+    if line.startswith("ERROR:"):
+        return f"Task error: {line[len('ERROR:'):].strip()}"
+    if "traceback (most recent call last)" in lower_line:
+        return "A task hit an unexpected error. Open technical details for more information."
+    if any(word in lower_line for word in ("error:", "failed", "exception", "could not")):
+        return f"Needs attention: {line}"
+
+    if lower_line.startswith("waiting for obs"):
+        return "Waiting for OBS. Open OBS and start its Replay Buffer to continue."
+    if lower_line in {"obs is ready.", "obs websocket connected."}:
+        return "Connected to OBS."
+    if lower_line == "live whisper loaded.":
+        return "Audio analysis is ready."
+    if lower_line == "clip saved:":
+        return "A highlight clip was saved."
+    if line.startswith("Game detected:"):
+        game_name = line[len("Game detected:"):].split("(profile:", 1)[0].strip().rstrip(".")
+        return f"Game detected: {game_name}."
+    if lower_line.startswith("game hud ocr started"):
+        return "Game-event detection is ready."
+    return None
+
+
+def _summarize_obs_status(replay, recording, streaming):
+    if replay:
+        return "ready", "OBS is connected and Replay Buffer is on."
+    if recording or streaming:
+        return (
+            "warning",
+            "OBS is active, but Replay Buffer is off. Capture can try to start it automatically.",
+        )
+    return (
+        "warning",
+        "Replay Buffer, recording, and streaming are off. Start one before expecting clips; "
+        "capture will wait until OBS is active.",
+    )
+
+
+def _check_folder_preflight(label, folder, allow_create=False):
+    try:
+        path = Path(str(folder)).expanduser()
+        if path.exists():
+            if not path.is_dir():
+                return "warning", f"{label} is not a folder: {path}"
+            if not os.access(path, os.R_OK | os.W_OK):
+                return "warning", f"{label} isn't readable and writable: {path}"
+            return "ready", f"Folder is available: {path}"
+
+        if allow_create:
+            parent = path.parent
+            while not parent.exists() and parent != parent.parent:
+                parent = parent.parent
+            if parent.is_dir() and os.access(parent, os.R_OK | os.W_OK):
+                return "ready", f"Folder will be created when needed: {path}"
+
+        return "warning", f"{label} isn't available: {path}"
+    except (OSError, TypeError, ValueError) as error:
+        return "warning", f"Couldn't check {label}: {error}"
+
+
+def _audio_device_for_preflight(devices, configured_name, is_microphone, fallback_index):
+    exact = [device for device in devices if device.get("name", "") == configured_name]
+    if exact:
+        return exact[0]
+
+    if is_microphone:
+        partial = [
+            device for device in devices
+            if device.get("maxInputChannels", 0) > 0
+            and not device.get("isLoopbackDevice", False)
+        ]
+    else:
+        partial = [
+            device for device in devices
+            if "Headphones" in device.get("name", "")
+            and "High Definition Audio Device" in device.get("name", "")
+            and "Loopback" in device.get("name", "")
+        ]
+    if partial:
+        return partial[0]
+
+    try:
+        fallback = devices[int(fallback_index)]
+    except (IndexError, TypeError, ValueError):
+        return None
+    return fallback if fallback.get("maxInputChannels", 0) > 0 else None
+
+
+def _check_audio_preflight(config):
+    try:
+        pyaudio = importlib.import_module("pyaudio")
+        audio = pyaudio.PyAudio()
+        try:
+            devices = [
+                audio.get_device_info_by_index(index)
+                for index in range(audio.get_device_count())
+            ]
+        finally:
+            audio.terminate()
+    except Exception as error:
+        return "warning", f"Couldn't check audio devices: {error}"
+
+    source_type = config.get("audio_source_type", "loopback")
+    roles = []
+    if source_type in {"loopback", "both"}:
+        roles.append(("loopback audio", config.get("audio_loopback_device_name", ""), False))
+    if source_type in {"microphone", "both"}:
+        roles.append(("microphone", config.get("audio_microphone_device_name", ""), True))
+    if not roles:
+        roles.append(("loopback audio", config.get("audio_loopback_device_name", ""), False))
+
+    selected = []
+    for label, configured_name, is_microphone in roles:
+        device = _audio_device_for_preflight(
+            devices,
+            configured_name,
+            is_microphone,
+            config.get("audio_device_fallback_index", 0),
+        )
+        if device is None or device.get("maxInputChannels", 0) <= 0:
+            return "warning", f"No usable {label} device was found. Choose one in Settings."
+        selected.append(f"{label}: {device.get('name', 'unnamed device')}")
+
+    return "ready", "Audio device is available (" + "; ".join(selected) + ")."
+
+
+def _check_tesseract_preflight(config):
+    if not config.get("game_events_enabled", True):
+        return "optional", "Game-event detection is turned off."
+
+    configured_command = str(config.get("game_tesseract_cmd", "")).strip()
+    available = (
+        Path(configured_command).is_file() or shutil.which(configured_command) is not None
+        if configured_command
+        else shutil.which("tesseract") is not None
+    )
+    if available:
+        return "ready", "Tesseract is available for game-event OCR."
+    return (
+        "optional",
+        "Game-event OCR needs Tesseract. Install it or set its path in Settings; "
+        "audio-based highlights can still work.",
+    )
+
+
+def _check_obs_preflight(config=None):
+    config = config or app_config.load_config()
+    host = str(config.get("obs_host", "127.0.0.1"))
+    port = config.get("obs_port", 4455)
+    client = None
+
+    try:
+        from obsws_python import ReqClient
+
+        client = ReqClient(
+            host=host,
+            port=int(port),
+            password=app_config.get_obs_password(),
+            timeout=3,
+        )
+        replay = bool(getattr(client.get_replay_buffer_status(), "output_active", False))
+        recording = bool(getattr(client.get_record_status(), "output_active", False))
+        streaming = bool(getattr(client.get_stream_status(), "output_active", False))
+        level, message = _summarize_obs_status(replay, recording, streaming)
+        obs_check = ("OBS connection", level, message, "")
+    except Exception as error:
+        obs_check = (
+            "OBS connection",
+            "warning",
+            f"Couldn't connect to OBS at {host}:{port}. Check that OBS is open and its "
+            "WebSocket settings match. Capture can still wait for OBS.",
+            str(error),
+        )
+    finally:
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+
+    recording_check = _check_folder_preflight(
+        "OBS recording folder",
+        config.get("recording_folder", app_config.DEFAULTS["recording_folder"]),
+    )
+    try:
+        output_folder = app_config.get_output_folder(config)
+        output_check = _check_folder_preflight("Output folder", output_folder, allow_create=True)
+    except (OSError, TypeError, ValueError) as error:
+        output_check = ("warning", f"Couldn't check clip output folder: {error}")
+    audio_level, audio_message = _check_audio_preflight(config)
+    tesseract_level, tesseract_message = _check_tesseract_preflight(config)
+
+    return [
+        ("obs", "OBS connection", *obs_check[1:]),
+        ("audio", "Audio input", audio_level, audio_message, ""),
+        ("recording", "OBS recording folder", *recording_check, ""),
+        ("output", "Clip output folder", *output_check, ""),
+        ("ocr", "Game-event OCR (optional)", tesseract_level, tesseract_message, ""),
+    ]
 
 
 def _fetch_latest_release():
@@ -144,6 +361,7 @@ def run_worker(role):
 class MainApp:
     def __init__(self, root):
         self.root = root
+        self._first_run = not app_config.CONFIG_FILE.exists()
         self.root.title(f"OBS AI Highlights v{APP_VERSION}")
         self.root.geometry("880x700")
         self.root.minsize(780, 600)
@@ -153,6 +371,7 @@ class MainApp:
         self.active_process = None
         self.active_role = None
         self.log_queue = queue.Queue()
+        self._preflight_check_running = False
         self.update_queue = queue.Queue()
         self.download_queue = queue.Queue()
         self.clip_render_queue = queue.Queue()
@@ -195,6 +414,8 @@ class MainApp:
         # re-application (not just the colors each Text widget was
         # constructed with) is needed.
         self._apply_theme_to_text_widgets(ui_theme.get_theme())
+        if self._first_run:
+            self.root.after_idle(self._show_first_run_guide)
 
     # -----------------------------------------------------------
     # UI construction
@@ -212,7 +433,7 @@ class MainApp:
         ttk.Label(
             quick_start,
             text=(
-                "1. Open OBS and start its Replay Buffer.\n"
+                "1. Open OBS and start Replay Buffer, recording, or streaming.\n"
                 "2. Choose your content preset in Settings if needed.\n"
                 "3. Start capture below, then do your thing."
             ),
@@ -238,6 +459,13 @@ class MainApp:
         )
         self.stop_button.pack(side="left", padx=(8, 0))
 
+        self.preflight_button = ttk.Button(
+            action_row,
+            text="Check setup",
+            command=self._start_obs_preflight,
+        )
+        self.preflight_button.pack(side="left", padx=(8, 0))
+
         ttk.Button(
             action_row,
             text="Settings",
@@ -246,19 +474,47 @@ class MainApp:
 
         self.status_label = ttk.Label(
             parent,
-            text="Ready. Start OBS Replay Buffer, then begin capture.",
+            text="Ready. Start OBS Replay Buffer, recording, or streaming, then begin capture.",
             font=("TkDefaultFont", 10, "bold"),
         )
         self.status_label.pack(fill="x", pady=(0, 4))
 
+        next_step_row = ttk.Frame(parent)
+        next_step_row.pack(fill="x", pady=(0, 10))
         self.next_step_label = ttk.Label(
-            parent,
+            next_step_row,
             text="Saved clips will appear in the Clips tab.",
-            wraplength=700,
+            wraplength=570,
         )
-        self.next_step_label.pack(fill="x", pady=(0, 10))
+        self.next_step_label.pack(side="left", fill="x", expand=True)
+        self.review_clips_button = ttk.Button(
+            next_step_row,
+            text="Review clips",
+            command=self._open_clips_tab,
+            state="disabled",
+        )
+        self.review_clips_button.pack(side="right", padx=(8, 0))
+
+        self.preflight_frame = ttk.LabelFrame(parent, text="Setup checklist", padding=8)
+        self.preflight_titles = {
+            "obs": "OBS connection",
+            "audio": "Audio input",
+            "recording": "OBS recording folder",
+            "output": "Clip output folder",
+            "ocr": "Game-event OCR (optional)",
+        }
+        self.preflight_rows = {}
+        for key, title in self.preflight_titles.items():
+            label = ttk.Label(
+                self.preflight_frame,
+                text=f"{title}: Not checked",
+                wraplength=700,
+            )
+            label.pack(anchor="w", pady=1)
+            self.preflight_rows[key] = label
 
         processing = ttk.LabelFrame(parent, text="After capture", padding=8)
+        self.processing_frame = processing
         processing.pack(fill="x", pady=(0, 8))
         ttk.Label(
             processing,
@@ -301,11 +557,23 @@ class MainApp:
         self.game_status_label = ttk.Label(parent, text="Game events: checking for a supported game...")
         self.game_status_label.pack(anchor="w", pady=(0, 6))
 
+        ttk.Label(parent, text="Recent activity").pack(anchor="w", pady=(4, 2))
+        self.activity_text = tk.Text(
+            parent,
+            height=5,
+            state="disabled",
+            wrap="word",
+            **self._text_widget_colors,
+        )
+        self.activity_text.pack(fill="x", pady=(0, 4))
+        self._activity_messages = ["No recent activity yet."]
+        self._refresh_activity_feed()
+
         log_header = ttk.Frame(parent)
         log_header.pack(fill="x", pady=(4, 0))
         self.log_toggle_button = ttk.Button(
             log_header,
-            text="Show activity details",
+            text="Show technical details",
             command=self._toggle_activity_log,
         )
         self.log_toggle_button.pack(side="left")
@@ -324,15 +592,106 @@ class MainApp:
         self.activity_log_frame = log_frame
         self._activity_log_visible = False
 
+    def _show_first_run_guide(self):
+        guide = tk.Toplevel(self.root)
+        guide.title("Welcome to OBS AI Highlights")
+        guide.transient(self.root)
+        guide.resizable(False, False)
+
+        body = ttk.Frame(guide, padding=18)
+        body.pack(fill="both", expand=True)
+        ttk.Label(
+            body,
+            text="A few quick steps before your first capture",
+            font=("TkDefaultFont", 12, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+        ttk.Label(
+            body,
+            text=(
+                "1. Open OBS and enable its WebSocket server in Tools > WebSocket Server Settings.\n"
+                "2. In Settings, choose an audio source/device and check your recording and output folders.\n"
+                "3. Return to Run, select Check setup, then start capturing highlights."
+            ),
+            justify="left",
+            wraplength=520,
+        ).pack(anchor="w")
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill="x", pady=(16, 0))
+        ttk.Button(
+            buttons,
+            text="Open Settings",
+            command=lambda: self._open_settings_from_guide(guide),
+        ).pack(side="left")
+        ttk.Button(buttons, text="I'll do this later", command=guide.destroy).pack(side="right")
+
+    def _open_settings_from_guide(self, guide):
+        guide.destroy()
+        self.main_notebook.select(3)
+
     def _toggle_activity_log(self):
         if self._activity_log_visible:
             self.activity_log_frame.pack_forget()
-            self.log_toggle_button.configure(text="Show activity details")
+            self.log_toggle_button.configure(text="Show technical details")
             self._activity_log_visible = False
         else:
             self.activity_log_frame.pack(fill="both", expand=True, pady=(6, 0))
-            self.log_toggle_button.configure(text="Hide activity details")
+            self.log_toggle_button.configure(text="Hide technical details")
             self._activity_log_visible = True
+
+    def _refresh_activity_feed(self):
+        self.activity_text.configure(state="normal")
+        self.activity_text.delete("1.0", "end")
+        self.activity_text.insert("1.0", "\n".join(self._activity_messages))
+        self.activity_text.see("end")
+        self.activity_text.configure(state="disabled")
+
+    def _append_activity(self, message):
+        if self._activity_messages == ["No recent activity yet."]:
+            self._activity_messages.clear()
+        self._activity_messages.append(message)
+        self._activity_messages = self._activity_messages[-8:]
+        self._refresh_activity_feed()
+
+    def _start_obs_preflight(self):
+        if self._preflight_check_running:
+            return
+
+        if not self.preflight_frame.winfo_manager():
+            self.preflight_frame.pack(
+                before=self.processing_frame,
+                fill="x",
+                pady=(0, 8),
+            )
+        self._preflight_check_running = True
+        self.preflight_button.configure(state="disabled")
+        for key, label in self.preflight_rows.items():
+            label.configure(text=f"{self.preflight_titles[key]}: Checking...")
+        self._append_activity("Checking OBS, audio, and folder setup...")
+        threading.Thread(target=self._run_obs_preflight, daemon=True).start()
+
+    def _run_obs_preflight(self):
+        result = _check_obs_preflight()
+        self.log_queue.put(("__PREFLIGHT__", result))
+
+    def _on_obs_preflight_done(self, result):
+        self._preflight_check_running = False
+        self.preflight_button.configure(state="normal")
+        statuses = {
+            "ready": "Ready",
+            "warning": "Needs attention",
+            "optional": "Optional",
+        }
+        for key, title, level, message, detail in result:
+            label = self.preflight_rows[key]
+            label.configure(text=f"{title}: {statuses.get(level, 'Status')} — {message}")
+            self._append_log(f"Pre-flight - {title}: {message}\n")
+            if detail:
+                self._append_log(f"Pre-flight details - {title}: {detail}\n")
+            if level == "warning":
+                self._append_activity(f"Setup needs attention: {message}")
+        if not any(check[2] == "warning" for check in result):
+            self._append_activity("Setup check finished. No required items need attention.")
 
     def _save_pipeline_settings(self):
         # Read-modify-write against the current on-disk config rather
@@ -364,7 +723,15 @@ class MainApp:
             wraplength=680,
         ).pack(anchor="w", pady=(0, 8))
 
+        self.sessions_empty_label = ttk.Label(
+            parent,
+            text="No capture sessions yet. Start capturing highlights from the Run tab to see session stats here.",
+            wraplength=680,
+        )
+
         list_frame = ttk.Frame(parent)
+        self.sessions_list_frame = list_frame
+        self.sessions_empty_label.pack(anchor="w", pady=(0, 8))
         list_frame.pack(fill="both", expand=True)
 
         columns = ("label", "started", "thoughts", "saved")
@@ -416,7 +783,17 @@ class MainApp:
 
         self._session_id_by_iid = {}
 
-        for record in session_stats.list_sessions():
+        records = session_stats.list_sessions()
+        if records:
+            self.sessions_empty_label.pack_forget()
+        elif not self.sessions_empty_label.winfo_manager():
+            self.sessions_empty_label.pack(
+                before=self.sessions_list_frame,
+                anchor="w",
+                pady=(0, 8),
+            )
+
+        for record in records:
             started = record.get("started_at", "")[:16].replace("T", " ")
             iid = self.sessions_tree.insert(
                 "",
@@ -565,7 +942,23 @@ class MainApp:
             "<<ComboboxSelected>>", lambda _e: self._refresh_clips_list()
         )
 
+        self.clips_empty_frame = ttk.Frame(parent, padding=(4, 4))
+        self.clips_empty_label = ttk.Label(
+            self.clips_empty_frame,
+            text="No clips yet. Start capture from the Run tab, then prepare saved clips for review.",
+            wraplength=600,
+        )
+        self.clips_empty_label.pack(side="left", fill="x", expand=True)
+        self.clips_empty_button = ttk.Button(
+            self.clips_empty_frame,
+            text="Go to Run tab",
+            command=lambda: self.main_notebook.select(0),
+        )
+        self.clips_empty_button.pack(side="right", padx=(8, 0))
+
         list_frame = ttk.Frame(parent)
+        self.clips_list_frame = list_frame
+        self.clips_empty_frame.pack(fill="x", pady=(0, 6))
         list_frame.pack(fill="both", expand=True)
 
         columns = ("clip", "score", "status", "duration", "rendered")
@@ -708,11 +1101,45 @@ class MainApp:
 
         self._clip_by_iid = {}
 
-        clips = clip_manager.list_clips()
+        all_clips = clip_manager.list_clips()
+        self._all_clips_count = len(all_clips)
+        self.review_clips_button.configure(
+            state="normal" if all_clips else "disabled"
+        )
+        clips = all_clips
 
         status_filter = self.clip_status_filter_var.get()
         if status_filter != "All":
             clips = [clip for clip in clips if clip["status"] == status_filter]
+
+        if not clips:
+            if all_clips:
+                self.clips_empty_label.configure(
+                    text="No clips match this status. Change the filter to All to see your clips."
+                )
+                self.clips_empty_button.configure(
+                    text="Show all clips",
+                    command=self._show_all_clips,
+                )
+            else:
+                self.clips_empty_label.configure(
+                    text=(
+                        "No clips yet. Start capture from the Run tab, then prepare saved "
+                        "clips for review."
+                    )
+                )
+                self.clips_empty_button.configure(
+                    text="Go to Run tab",
+                    command=lambda: self.main_notebook.select(0),
+                )
+            if not self.clips_empty_frame.winfo_manager():
+                self.clips_empty_frame.pack(
+                    before=self.clips_list_frame,
+                    fill="x",
+                    pady=(0, 6),
+                )
+        else:
+            self.clips_empty_frame.pack_forget()
 
         if self._clips_sort_key:
             clips.sort(
@@ -741,6 +1168,14 @@ class MainApp:
             self._clip_by_iid[iid] = clip["base_name"]
 
         self._clear_clip_detail()
+
+    def _show_all_clips(self):
+        self.clip_status_filter_var.set("All")
+        self._refresh_clips_list()
+
+    def _open_clips_tab(self):
+        self.main_notebook.select(1)
+        self._refresh_clips_list()
 
     def _selected_clip_base_names(self):
         return [
@@ -1055,7 +1490,12 @@ class MainApp:
         self._text_widget_colors = ui_theme.text_widget_colors(theme)
 
         def _apply():
-            for widget in (self.log_text, self.session_detail_text, self.clip_detail_text):
+            for widget in (
+                self.activity_text,
+                self.log_text,
+                self.session_detail_text,
+                self.clip_detail_text,
+            ):
                 widget.configure(**self._text_widget_colors)
 
         _apply()
@@ -1309,6 +1749,7 @@ class MainApp:
             return
 
         self._append_log(f"--- Starting {WORKER_LABELS[role]} ---\n")
+        self._append_activity(f"{WORKER_LABELS[role]} started.")
         status_text = {
             "capture": "Capture is running. OBS AI Highlights is listening for moments to save.",
             "verify": "Preparing saved clips for review...",
@@ -1317,7 +1758,10 @@ class MainApp:
         self.status_label.configure(text=status_text[role])
         if role == "capture":
             self.next_step_label.configure(
-                text="Keep OBS Replay Buffer running. Select Stop Capture when you're done."
+                text=(
+                    "Keep OBS active. If you started recording or streaming, capture can try "
+                    "to start Replay Buffer automatically. Select Stop Capture when you're done."
+                )
             )
         elif role == "verify":
             self.next_step_label.configure(
@@ -1345,7 +1789,7 @@ class MainApp:
         except Exception as exc:
             self._append_log(f"--- Failed to start {WORKER_LABELS[role]}: {exc} ---\n")
             self.status_label.configure(text="Couldn't start that task.")
-            self.next_step_label.configure(text="Show activity details below for the error.")
+            self.next_step_label.configure(text="Show technical details below for the error.")
             if not self._activity_log_visible:
                 self._toggle_activity_log()
             return
@@ -1374,6 +1818,8 @@ class MainApp:
                 item = self.log_queue.get_nowait()
                 if isinstance(item, tuple) and item[0] == "__DONE__":
                     self._on_worker_done(item[1])
+                elif isinstance(item, tuple) and item[0] == "__PREFLIGHT__":
+                    self._on_obs_preflight_done(item[1])
                 else:
                     self._append_log(item)
         except queue.Empty:
@@ -1387,24 +1833,48 @@ class MainApp:
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
+        message = _friendly_activity_message(text)
+        if message:
+            self._append_activity(message)
+
     def _on_worker_done(self, return_code):
         role = self.active_role
 
         self._append_log(f"--- {WORKER_LABELS.get(role, role)} finished (exit code {return_code}) ---\n")
+        if role in {"capture", "verify", "render"}:
+            self._refresh_clips_list()
+
         if return_code == 0:
+            self._append_activity(f"{WORKER_LABELS.get(role, 'Task')} finished.")
             status_text = {
                 "capture": "Capture finished.",
                 "verify": "Clip preparation finished.",
                 "render": "Clip rendering finished.",
             }
             self.status_label.configure(text=status_text.get(role, "Task finished."))
-            self.next_step_label.configure(
-                text="Open the Clips tab to review your saved clips and find anything that's ready."
-            )
+            if role == "verify" and not self._all_clips_count:
+                self.next_step_label.configure(
+                    text=(
+                        "No clips were found to prepare. Check OBS and audio in the setup "
+                        "checklist, then try capturing again."
+                    )
+                )
+            elif role == "verify":
+                self.next_step_label.configure(
+                    text="Clip preparation is complete. Open Clips to review what was found."
+                )
+            else:
+                self.next_step_label.configure(
+                    text="Open Clips to review your saved clips and see what's ready."
+                )
         else:
+            self._append_activity(
+                f"Task ended with an error (exit code {return_code}). "
+                "Open technical details for more information."
+            )
             self.status_label.configure(text="That task ended with an error.")
             self.next_step_label.configure(
-                text="Show activity details below, then check your OBS and folder settings."
+                text="Show technical details below, then check your OBS and folder settings."
             )
             if not self._activity_log_visible:
                 self._toggle_activity_log()
@@ -1422,6 +1892,7 @@ class MainApp:
             return
 
         self._append_log("--- Stop requested ---\n")
+        self._append_activity("Stopping the current task...")
         self._kill_process_tree(self.active_process.pid)
 
     def _kill_process_tree(self, pid):
