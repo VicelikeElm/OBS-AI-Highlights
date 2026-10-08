@@ -1,0 +1,51 @@
+{
+  "game_name": "Rainbow Six Siege",
+  "profile_name": "Siege",
+  "process_names": [
+    "RainbowSix.exe",
+    "RainbowSix_Vulkan.exe"
+  ],
+  "ocr_region": {
+    "left": 0.70,
+    "top": 0.04,
+    "width": 0.29,
+    "height": 0.30
+  },
+  "event_patterns": {
+    "KILL": [
+      "\\b{player}\\b.{0,50}\\b(?:killed|eliminated|downed)\\b"
+    ],
+    "DEATH": [
+      "\\b(?:killed|eliminated|downed)\\b.{0,50}\\b{player}\\b"
+    ],
+    "PLANT": [
+      "\\b(?:planting|planted)\\b",
+      "\\bdefuser planted\\b",
+      "\\bbomb planted\\b"
+    ],
+    "DEFUSE": [
+      "\\b(?:defusing|defused)\\b",
+      "\\bdefuser disabled\\b",
+      "\\bbomb defused\\b"
+    ],
+    "ROUND_WIN": [
+      "\\bround victory\\b",
+      "\\bround won\\b",
+      "\\byou won the round\\b",
+      "\\battackers win\\b",
+      "\\bdefenders win\\b"
+    ],
+    "CLUTCH": [
+      "\\bclutch\\b"
+    ],
+    "FLAWLESS_ROUND": [
+      "\\bflawless(?: victory| round)?\\b"
+    ],
+    "MATCH_POINT": [
+      "\\bmatch point\\b"
+    ],
+    "OVERTIME": [
+      "\\bovertime\\b"
+    ]
+  }
+}

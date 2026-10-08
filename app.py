@@ -35,6 +35,7 @@ except Exception:
 
 import config as app_config
 import clip_manager
+import game_detector
 import ui_theme
 import session_stats
 from settings_ui import SettingsUI
@@ -184,6 +185,7 @@ class MainApp:
         self._poll_log_queue()
         self._poll_clip_render_queue()
         self._poll_clip_thumbnail_queue()
+        self._poll_game_detection()
         self._check_for_updates()
 
         # See _apply_theme_to_text_widgets()'s own docstring for why this
@@ -253,6 +255,9 @@ class MainApp:
         self.status_label = ttk.Label(parent, text="Idle.")
         self.status_label.pack(fill="x", pady=(0, 6))
 
+        self.game_status_label = ttk.Label(parent, text="Game detection: checking...")
+        self.game_status_label.pack(fill="x", pady=(0, 6))
+
         log_frame = ttk.Frame(parent)
         log_frame.pack(fill="both", expand=True)
 
@@ -276,6 +281,16 @@ class MainApp:
         config["auto_verify"] = self.auto_verify_var.get()
         config["auto_render"] = self.auto_render_var.get()
         app_config.save_config(config)
+
+    def _poll_game_detection(self):
+        try:
+            game = game_detector.detect_running_game()
+            text = game_detector.format_game_detection(game)
+        except Exception as error:
+            text = f"Game detection unavailable: {error}"
+
+        self.game_status_label.configure(text=text)
+        self.root.after(5000, self._poll_game_detection)
 
     def _build_sessions_tab(self, parent):
         ttk.Label(
@@ -700,6 +715,28 @@ class MainApp:
         lines.append(f"Duration: {f'{duration:.1f}s' if duration is not None else '(unknown)'}")
         lines.append(f"Rendered: {'Yes' if clip['rendered'] else 'No'}")
         lines.append("")
+
+        game_context = clip.get("game_context")
+        if game_context:
+            lines.append(f"Game: {game_context.get('game', '(unknown)')}")
+            lines.append(f"Game profile: {game_context.get('profile', '(unknown)')}")
+            lines.append(f"Game score: {game_context.get('score', 0)}")
+            lines.append("Achievements:")
+            achievements = game_context.get("achievements", [])
+            if achievements:
+                lines.extend(f"  - {achievement}" for achievement in achievements)
+            else:
+                lines.append("  (none recorded)")
+            lines.append("Game events:")
+            events = game_context.get("events", [])
+            if events:
+                lines.extend(
+                    f"  - {event.get('type', 'EVENT')}: {event.get('text', '')}"
+                    for event in events[-12:]
+                )
+            else:
+                lines.append("  (none recorded)")
+            lines.append("")
 
         lines.append("Detection reasons:")
         if clip["reasons"]:

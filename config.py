@@ -100,6 +100,14 @@ DEFAULTS = {
     "audio_excitement_strong_ratio": 2.5,
     "audio_excitement_moderate_bonus": 10,
     "audio_excitement_strong_bonus": 18,
+    "game_events_enabled": True,
+    "game_player_name": "",
+    "game_tesseract_cmd": "",
+    "game_ocr_left": 0.70,
+    "game_ocr_top": 0.04,
+    "game_ocr_width": 0.29,
+    "game_ocr_height": 0.30,
+    "game_ocr_interval": 1.0,
 }
 
 

@@ -147,6 +147,7 @@ def get_clip(base_name, raw_video=None):
 
     verified_json_path = VERIFIED_FOLDER / (base_name + ".json")
     review_json_path = REVIEW_FOLDER / (base_name + ".json")
+    game_context_path = TRANSCRIPT_FOLDER / (base_name + "_game.json")
 
     metadata = None
     metadata_path = None
@@ -174,6 +175,10 @@ def get_clip(base_name, raw_video=None):
     if duration is None:
         duration = candidate_data.get("duration")
 
+    game_context = (metadata or {}).get("game_context")
+    if game_context is None and game_context_path.exists():
+        game_context = _read_json(game_context_path)
+
     return {
         "base_name": base_name,
         "raw_video": str(raw_video) if raw_video else None,
@@ -184,6 +189,7 @@ def get_clip(base_name, raw_video=None):
         "trim_end": (metadata or {}).get("trim_end"),
         "reasons": candidate_data.get("reasons", []),
         "transcript": transcript,
+        "game_context": game_context,
         "rendered": rendered,
         "rendered_path": str(rendered_path) if rendered else None,
         "metadata_path": str(metadata_path) if metadata_path else None,
@@ -441,6 +447,7 @@ def render_clip(base_name):
         "trim_start": float(trim_start),
         "trim_end": float(trim_end),
         "transcript": metadata.get("verified_matched_transcript") or metadata.get("live_transcript", ""),
+        "game_context": metadata.get("game_context"),
     }
 
     render_clips.READY_FOLDER.mkdir(parents=True, exist_ok=True)

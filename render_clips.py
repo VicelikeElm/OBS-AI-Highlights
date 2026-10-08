@@ -618,6 +618,9 @@ def get_verified_jobs():
             "transcript":
                 metadata.get("verified_matched_transcript")
                 or metadata.get("live_transcript", ""),
+
+            "game_context":
+                metadata.get("game_context"),
         })
 
     return jobs
@@ -644,6 +647,9 @@ def write_ready_metadata(job, base_name):
             METADATA_PHRASE_LISTS,
             METADATA_HASHTAGS,
         )
+        game_context = job.get("game_context")
+        if game_context:
+            metadata["game_context"] = game_context
 
         json_path = (
             READY_FOLDER
@@ -690,13 +696,14 @@ def write_ready_metadata(job, base_name):
 
             file.write(
                 "Hashtags: "
-                +
-                " ".join(
-                    metadata["hashtags"]
-                )
-                +
-                "\n"
+                + " ".join(metadata["hashtags"])
+                + "\n"
             )
+            if game_context:
+                file.write(
+                    f"\nGame: {game_context.get('game', '')}\n"
+                    f"Achievements: {', '.join(game_context.get('achievements', []))}\n"
+                )
 
     except Exception as error:
 

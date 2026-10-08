@@ -299,6 +299,24 @@ def load_live_transcript(
     return transcript.strip(), path
 
 
+def load_game_context(base_name):
+    path = os.path.join(
+        LIVE_TRANSCRIPT_FOLDER,
+        base_name + "_game.json",
+    )
+    if not os.path.exists(path):
+        return None
+
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            context = json.load(file)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"Could not read game context for {base_name}: {error}")
+        return None
+
+    return context if isinstance(context, dict) else None
+
+
 # =========================================================
 # FULL-SERMON SRT HELPERS
 # =========================================================
@@ -1465,6 +1483,7 @@ def save_results(
     trim_end,
     status,
     full_srt_check,
+    game_context=None,
 ):
 
     base_name = get_base_name(
@@ -1572,6 +1591,9 @@ def save_results(
 
         "full_sermon_srt":
             full_srt_check,
+
+        "game_context":
+            game_context,
     }
 
     with open(
@@ -1869,6 +1891,7 @@ def process_video(
             base_name
         )
     )
+    game_context = load_game_context(base_name)
 
     if not live_text:
 
@@ -1890,6 +1913,19 @@ def process_video(
                 video_path
             )
         )
+
+        trim_start = words[0]["start"] if words else None
+        trim_end = words[-1]["end"] if words else None
+        captions = (
+            build_caption_groups(words, 0, len(words) - 1, trim_start)
+            if words
+            else []
+        )
+        review_srt_path = os.path.join(
+            REVIEW_FOLDER,
+            base_name + ".srt",
+        )
+        write_srt(review_srt_path, captions)
 
         review_path = os.path.join(
             REVIEW_FOLDER,
@@ -1927,6 +1963,30 @@ def process_video(
 
                     "reason":
                         "No live transcript",
+
+                    "source_video":
+                        video_path,
+
+                    "live_transcript":
+                        "",
+
+                    "verified_matched_transcript":
+                        full_text,
+
+                    "trim_start":
+                        trim_start,
+
+                    "trim_end":
+                        trim_end,
+
+                    "final_duration":
+                        trim_end - trim_start if trim_start is not None else None,
+
+                    "captions":
+                        captions,
+
+                    "game_context":
+                        game_context,
                 },
                 file,
                 indent=4
@@ -2120,6 +2180,7 @@ def process_video(
         trim_end,
         status,
         full_srt_check,
+        game_context,
     )
 
     print()

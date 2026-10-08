@@ -151,6 +151,10 @@ def _pyinstaller_command():
     if assets_dir.exists():
         command.extend(["--add-data", f"{assets_dir};assets"])
 
+    profiles_dir = SOURCE_ROOT / "profiles"
+    if profiles_dir.exists():
+        command.extend(["--add-data", f"{profiles_dir};profiles"])
+
     if BUNDLED_FFMPEG_EXE.exists():
         command.extend(["--add-data", f"{BUNDLED_FFMPEG_EXE};."])
 

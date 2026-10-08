@@ -77,7 +77,12 @@ Highlights** from the Start Menu. One window, five tabs:
 - **Run** — start/stop live highlight capture, with Auto Verify/Auto
   Render checkboxes controlling what happens automatically once a
   capture ends, plus manual Verify Clips/Render Clips buttons and a live
-  log of what's happening.
+  log of what's happening. The Run tab also reports a detected supported
+  game and its profile; Rainbow Six Siege detection is included as the
+  first game profile. During capture, the optional game-event engine OCRs
+  a configurable primary-display region, scores recognized events and
+  achievements alongside transcript/audio scores, and stores that context
+  with saved clips.
 - **Clips** — every detected clip in one list, across every pipeline
   stage, with its score, status, duration, and detection reasons/full
   transcript. Play a clip in your default video player, Approve or
@@ -135,6 +140,13 @@ like an unexplained slowdown.
 Settings live in `%APPDATA%\OBS AI Highlights\` (`highlight_config.json` +
 `.env` for the OBS password) - separate from wherever the app itself is
 installed, so it works without admin rights and survives a reinstall.
+
+Game-event OCR also requires the Tesseract OCR application. Install
+Tesseract for Windows, then leave its executable on `PATH` or set its
+path in Settings → Game Events. Configure the OCR region as normalized
+left/top/width/height values against the primary display, and enter your
+in-game player name for kill/death attribution. If Tesseract is unavailable,
+normal transcript/audio capture continues and the error is logged.
 
 ## Running from source
 

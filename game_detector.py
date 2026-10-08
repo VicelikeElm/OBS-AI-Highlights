@@ -1,0 +1,92 @@
+# -*- coding: utf-8 -*-
+"""Detect supported games from their running process and load game profiles."""
+
+import json
+import sys
+from pathlib import Path
+
+import psutil
+
+
+def _profile_directory():
+    """Resolve bundled profiles both from source and a frozen PyInstaller app."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "profiles"
+
+    return Path(__file__).resolve().parent / "profiles"
+
+
+def load_game_profiles(profile_dir=None):
+    """Load and validate all JSON game profiles in the profile directory."""
+    directory = Path(profile_dir) if profile_dir is not None else _profile_directory()
+    profiles = []
+
+    for path in sorted(directory.glob("*.json")):
+        profile = json.loads(path.read_text(encoding="utf-8"))
+
+        for field in ("game_name", "profile_name", "process_names"):
+            if field not in profile:
+                raise ValueError(f"{path} is missing required field {field!r}.")
+
+        if (
+            not isinstance(profile["process_names"], list)
+            or not profile["process_names"]
+            or not all(isinstance(name, str) and name.strip() for name in profile["process_names"])
+        ):
+            raise ValueError(f"{path} must define at least one process name.")
+
+        event_patterns = profile.get("event_patterns", {})
+        if not isinstance(event_patterns, dict) or any(
+            not isinstance(patterns, list)
+            or not all(isinstance(pattern, str) for pattern in patterns)
+            for patterns in event_patterns.values()
+        ):
+            raise ValueError(f"{path} event_patterns must map event types to regex lists.")
+
+        region = profile.get("ocr_region")
+        if region is not None and (
+            not isinstance(region, dict)
+            or any(key not in region for key in ("left", "top", "width", "height"))
+        ):
+            raise ValueError(f"{path} ocr_region must define left, top, width, and height.")
+
+        profiles.append(profile)
+
+    return profiles
+
+
+def detect_running_game(process_iter=None, profile_dir=None):
+    """Return the matching game/profile and process name, or None if unsupported."""
+    profiles = load_game_profiles(profile_dir)
+    processes = process_iter if process_iter is not None else psutil.process_iter(["name"])
+
+    process_names = {}
+    for process in processes:
+        try:
+            name = process.info.get("name")
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+
+        if name:
+            process_names.setdefault(name.casefold(), name)
+
+    for profile in profiles:
+        for expected_name in profile["process_names"]:
+            process_name = process_names.get(expected_name.casefold())
+            if process_name:
+                return {
+                    "game_name": profile["game_name"],
+                    "profile_name": profile["profile_name"],
+                    "process_name": process_name,
+                    "profile": profile,
+                }
+
+    return None
+
+
+def format_game_detection(game):
+    """Format a detection result for the app's status display."""
+    if game is None:
+        return "No supported game detected."
+
+    return f"Detected: {game['game_name']}  |  Profile: {game['profile_name']}"

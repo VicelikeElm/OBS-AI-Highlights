@@ -9,6 +9,7 @@ import os
 # in) is imported below.
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 
+import json
 import gc
 import re
 import time
@@ -35,6 +36,9 @@ import config as app_config
 import presets
 import remote_api
 import session_stats
+import game_detector
+import game_events
+from round_tracker import RoundTracker
 
 
 # =========================================================
@@ -1140,7 +1144,8 @@ def save_candidate_transcript(
     score,
     text,
     reasons,
-    duration
+    duration,
+    game_context=None,
 ):
 
     base_name = os.path.splitext(
@@ -1208,6 +1213,14 @@ def save_candidate_transcript(
         file.write(text.strip())
 
         file.write("\n")
+
+    if game_context:
+        context_path = os.path.join(
+            TRANSCRIPT_FOLDER,
+            base_name + "_game.json",
+        )
+        with open(context_path, "w", encoding="utf-8") as file:
+            json.dump(game_context, file, indent=2, ensure_ascii=False)
 
     return destination
 
@@ -1652,7 +1665,15 @@ def save_obs_replay(
     return client, replay_path
 
 
-def save_triggered_clip(client, clip_number, score, thought_text, reasons, thought_duration):
+def save_triggered_clip(
+    client,
+    clip_number,
+    score,
+    thought_text,
+    reasons,
+    thought_duration,
+    game_context=None,
+):
     """Runs the same replay-buffer-save + move + transcript-write
     sequence for a clip that's been decided worth saving - whether that
     decision came from the normal phrase-scoring path or a manual
@@ -1713,6 +1734,7 @@ def save_triggered_clip(client, clip_number, score, thought_text, reasons, thoug
             thought_text,
             reasons,
             thought_duration,
+            game_context,
         )
     )
 
@@ -1808,6 +1830,50 @@ def run_live_sermon(
 
     last_save_time = 0
     clip_number = 0
+    active_game = None
+    game_tracker = None
+    game_context = None
+    game_event_queue = queue.Queue()
+    game_event_stop = threading.Event()
+    game_event_thread = None
+    game_clip_saved_round = None
+
+    def start_game_event_monitor():
+        nonlocal active_game, game_tracker, game_event_thread
+
+        if not CONFIG.get("game_events_enabled", True) or game_tracker is not None:
+            return
+
+        detected = game_detector.detect_running_game()
+        if detected is None:
+            return
+
+        active_game = detected
+        game_tracker = RoundTracker(
+            detected["game_name"],
+            detected["profile_name"],
+        )
+        region = {
+            "left": float(CONFIG.get("game_ocr_left", 0.70)),
+            "top": float(CONFIG.get("game_ocr_top", 0.04)),
+            "width": float(CONFIG.get("game_ocr_width", 0.29)),
+            "height": float(CONFIG.get("game_ocr_height", 0.30)),
+        }
+        monitor = game_events.GameEventMonitor(
+            detected,
+            region=region,
+            player_name=CONFIG.get("game_player_name", ""),
+            tesseract_cmd=CONFIG.get("game_tesseract_cmd", ""),
+        )
+        game_event_thread = threading.Thread(
+            target=monitor.run,
+            args=(game_event_stop, game_event_queue),
+            kwargs={"interval": CONFIG.get("game_ocr_interval", 1.0)},
+            daemon=True,
+        )
+        game_event_thread.start()
+        log(f"Game detected: {detected['game_name']} (profile: {detected['profile_name']}).")
+        log("Game HUD OCR started; adjust the Game Events region in Settings if needed.")
 
     in_prayer = False
 
@@ -1822,6 +1888,7 @@ def run_live_sermon(
     try:
 
         while session_running:
+            start_game_event_monitor()
 
             # ---------------------------------------------
             # CHECK OBS FIRST
@@ -1934,6 +2001,73 @@ def run_live_sermon(
                         f"Preset switched via scene rule "
                         f"('{status.get('scene_name', '')}'): {new_label}"
                     )
+
+            qualifying_game_snapshot = None
+            while True:
+                try:
+                    message_type, payload = game_event_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+                if message_type == "error":
+                    log(f"WARNING: Game OCR stopped: {payload}")
+                    game_event_stop.set()
+                    continue
+
+                snapshot = game_tracker.apply_event(payload) if game_tracker else None
+                if snapshot is None:
+                    continue
+
+                game_context = snapshot
+                log(f"Game event: {payload['type']} - {payload.get('text', '')}")
+                if RoundTracker.should_trigger(snapshot, SAVE_THRESHOLD):
+                    qualifying_game_snapshot = snapshot
+
+            if qualifying_game_snapshot:
+                paused = (
+                    (remote_state is not None and remote_state.is_paused())
+                    or scene_rule_action in ("pause", "ignore")
+                )
+                elapsed = time.time() - last_save_time
+                can_save = elapsed >= MIN_SECONDS_BETWEEN_SAVES
+                replay_ready = status["replay"] or auto_started_replay
+                if not paused and can_save and replay_ready and (
+                    qualifying_game_snapshot["round"] != game_clip_saved_round
+                ):
+                    event_reasons = [
+                        f"{event['type']} (+{event['points']})"
+                        for event in qualifying_game_snapshot["events"]
+                    ]
+                    event_reasons.extend(qualifying_game_snapshot["achievements"])
+                    game_score = min(max(0, qualifying_game_snapshot["score"]), 300)
+                    log(f"Game highlight qualified with score {game_score}.")
+                    client, clip_number, new_last_save_time, stop_session, saved_clip_path = (
+                        save_triggered_clip(
+                            client,
+                            clip_number,
+                            game_score,
+                            "",
+                            event_reasons,
+                            0.0,
+                            qualifying_game_snapshot,
+                        )
+                    )
+                    if stop_session:
+                        session_running = False
+                        break
+                    if new_last_save_time is not None:
+                        last_save_time = new_last_save_time
+                        game_clip_saved_round = qualifying_game_snapshot["round"]
+                    if saved_clip_path:
+                        session_stats.record_saved_clip(session_id, saved_clip_path)
+                        session_stats.record_thought(
+                            session_id,
+                            "saved",
+                            game_score,
+                            [],
+                            [],
+                        )
+                    continue
 
             # ---------------------------------------------
             # REMOTE CONTROL: preset switch / manual highlight
@@ -2375,6 +2509,12 @@ def run_live_sermon(
             thought_excitement = (
                 thought_max_spike_ratio
             )
+            thought_game_context = game_context
+            if (
+                thought_game_context
+                and thought_game_context["round"] == game_clip_saved_round
+            ):
+                thought_game_context = None
 
             # Start fresh immediately
             thought_parts = []
@@ -2397,6 +2537,9 @@ def run_live_sermon(
                     thought_excitement,
                 )
             )
+            if thought_game_context:
+                score, game_reasons = RoundTracker.combine_score(score, thought_game_context)
+                reasons.extend(game_reasons)
 
             log()
             log("-" * 70)
@@ -2554,6 +2697,7 @@ def run_live_sermon(
                     thought_text,
                     reasons,
                     thought_duration,
+                    thought_game_context,
                 )
             )
 
@@ -2577,6 +2721,9 @@ def run_live_sermon(
     finally:
 
         try:
+            game_event_stop.set()
+            if game_event_thread is not None:
+                game_event_thread.join(timeout=2)
 
             session_stats.end_session(
                 session_id

@@ -126,6 +126,11 @@ NUMERIC_LIMITS = (
     ("Strong spike ratio", "audio_excitement_strong_ratio", 1.0, 5.0),
     ("Moderate spike bonus", "audio_excitement_moderate_bonus", 0, 50),
     ("Strong spike bonus", "audio_excitement_strong_bonus", 0, 50),
+    ("Game OCR region left", "game_ocr_left", 0.0, 1.0),
+    ("Game OCR region top", "game_ocr_top", 0.0, 1.0),
+    ("Game OCR region width", "game_ocr_width", 0.01, 1.0),
+    ("Game OCR region height", "game_ocr_height", 0.01, 1.0),
+    ("Game OCR interval", "game_ocr_interval", 0.25, 10.0),
 )
 
 CAPTION_LIMITS = (
@@ -152,6 +157,32 @@ def _cpu_compute_types():
         return CPU_COMPUTE_TYPES
 
 
+def _as_numeric(value):
+    """Coerces numeric strings to their Python numeric type so Settings
+    validation still works when a dict is loaded from JSON, a Tk widget, or a
+    partially-edited manual config value."""
+    if value is None or isinstance(value, bool):
+        return None
+
+    if isinstance(value, (int, float)):
+        return value
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+
+        try:
+            return int(text)
+        except ValueError:
+            try:
+                return float(text)
+            except ValueError:
+                return None
+
+    return None
+
+
 def validate_settings(config, caption_style_key=None, caption_style_fields=None):
     """Everything wrong with a settings dict about to be saved, as a list of
     plain-language problems (empty when it's fine). Save runs this so a typo
@@ -164,24 +195,45 @@ def validate_settings(config, caption_style_key=None, caption_style_fields=None)
 
     for label, key, low, high in NUMERIC_LIMITS:
         value = config.get(key)
+        numeric_value = _as_numeric(value)
 
-        if value is not None and not low <= value <= high:
+        if numeric_value is not None and not low <= numeric_value <= high:
             problems.append(f"{label} must be between {low} and {high} (it's {value}).")
 
-    if config.get("possible_threshold", 0) > config.get("save_threshold", 100):
+    possible_threshold = _as_numeric(config.get("possible_threshold", 0))
+    save_threshold = _as_numeric(config.get("save_threshold", 100))
+    if possible_threshold is not None and save_threshold is not None and possible_threshold > save_threshold:
         problems.append(
             "The Possible-clip threshold can't be higher than the Save-clip threshold - "
             "a moment that meets the Save threshold would be ignored."
         )
 
-    if config.get("audio_excitement_moderate_ratio", 0) > config.get("audio_excitement_strong_ratio", 99):
+    moderate_ratio = _as_numeric(config.get("audio_excitement_moderate_ratio", 0))
+    strong_ratio = _as_numeric(config.get("audio_excitement_strong_ratio", 99))
+    if moderate_ratio is not None and strong_ratio is not None and moderate_ratio > strong_ratio:
         problems.append("The Moderate spike ratio can't be higher than the Strong spike ratio.")
+
+    region_left = _as_numeric(config.get("game_ocr_left", 0.70))
+    region_top = _as_numeric(config.get("game_ocr_top", 0.04))
+    region_width = _as_numeric(config.get("game_ocr_width", 0.29))
+    region_height = _as_numeric(config.get("game_ocr_height", 0.30))
+    if (
+        region_left is not None
+        and region_top is not None
+        and region_width is not None
+        and region_height is not None
+    ):
+        if region_left + region_width > 1:
+            problems.append("Game OCR region left plus width can't extend past the display edge.")
+        if region_top + region_height > 1:
+            problems.append("Game OCR region top plus height can't extend past the display edge.")
 
     if caption_style_key == "custom" and caption_style_fields:
         for label, key, low, high in CAPTION_LIMITS:
             value = caption_style_fields.get(key)
+            numeric_value = _as_numeric(value)
 
-            if value is not None and not low <= value <= high:
+            if numeric_value is not None and not low <= numeric_value <= high:
                 problems.append(f"{label} must be between {low} and {high} (it's {value}).")
 
     for label, device_key, compute_key in (
@@ -267,6 +319,14 @@ class SettingsUI:
         self.audio_excitement_strong_ratio_var = tk.StringVar()
         self.audio_excitement_moderate_bonus_var = tk.StringVar()
         self.audio_excitement_strong_bonus_var = tk.StringVar()
+        self.game_events_enabled_var = tk.BooleanVar()
+        self.game_player_name_var = tk.StringVar()
+        self.game_tesseract_cmd_var = tk.StringVar()
+        self.game_ocr_left_var = tk.StringVar()
+        self.game_ocr_top_var = tk.StringVar()
+        self.game_ocr_width_var = tk.StringVar()
+        self.game_ocr_height_var = tk.StringVar()
+        self.game_ocr_interval_var = tk.StringVar()
         self.pause_end_pattern_var = tk.StringVar()
 
         self.render_style_var = tk.StringVar()
@@ -311,6 +371,7 @@ class SettingsUI:
         preset_tab = ttk.Frame(notebook, padding=12)
         connection_tab = ttk.Frame(notebook, padding=12)
         model_tab = ttk.Frame(notebook, padding=12)
+        game_events_tab = ttk.Frame(notebook, padding=12)
         caption_tab = ttk.Frame(notebook, padding=12)
         scene_rules_tab = ttk.Frame(notebook, padding=12)
         about_tab = ttk.Frame(notebook, padding=12)
@@ -318,6 +379,7 @@ class SettingsUI:
         notebook.add(preset_tab, text="Preset & Phrases")
         notebook.add(connection_tab, text="OBS & Folders")
         notebook.add(model_tab, text="Whisper & Thresholds")
+        notebook.add(game_events_tab, text="Game Events")
         notebook.add(caption_tab, text="Video Style")
         notebook.add(scene_rules_tab, text="Scene Rules")
         notebook.add(about_tab, text="About")
@@ -325,6 +387,7 @@ class SettingsUI:
         self._build_preset_tab(preset_tab)
         self._build_connection_tab(connection_tab)
         self._build_model_tab(model_tab)
+        self._build_game_events_tab(game_events_tab)
         self._build_caption_style_tab(caption_tab)
         self._build_scene_rules_tab(scene_rules_tab)
         self._build_about_tab(about_tab)
@@ -546,6 +609,44 @@ class SettingsUI:
             text="What do these settings mean?",
             command=self._show_model_info,
         ).pack(anchor="w", pady=(10, 0))
+
+    def _build_game_events_tab(self, parent):
+        parent = self._make_scrollable(parent)
+        ttk.Checkbutton(
+            parent,
+            text="Enable game event OCR during Highlight Capture",
+            variable=self.game_events_enabled_var,
+        ).pack(anchor="w", pady=(0, 8))
+        ttk.Label(
+            parent,
+            text=(
+                "Supported games are detected from their process. OCR reads a normalized "
+                "rectangle of the primary display once per interval. Set the rectangle to "
+                "include the game's event/HUD text. Game clips continue through the existing "
+                "Review workflow."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 8))
+        self._add_labeled_entry(parent, "Player name (for kill/death attribution)", self.game_player_name_var)
+        self._add_labeled_entry(parent, "Tesseract executable (blank uses PATH)", self.game_tesseract_cmd_var)
+        ttk.Label(parent, text="OCR region, normalized to primary display (0.0-1.0)").pack(
+            fill="x", pady=(8, 0)
+        )
+        self._add_labeled_spinbox(parent, "Left", self.game_ocr_left_var, 0.0, 1.0, 0.01, fmt="%.2f")
+        self._add_labeled_spinbox(parent, "Top", self.game_ocr_top_var, 0.0, 1.0, 0.01, fmt="%.2f")
+        self._add_labeled_spinbox(parent, "Width", self.game_ocr_width_var, 0.01, 1.0, 0.01, fmt="%.2f")
+        self._add_labeled_spinbox(parent, "Height", self.game_ocr_height_var, 0.01, 1.0, 0.01, fmt="%.2f")
+        self._add_labeled_spinbox(parent, "OCR interval (seconds)", self.game_ocr_interval_var, 0.25, 10.0, 0.25)
+        ttk.Label(
+            parent,
+            text=(
+                "Tesseract OCR must be installed separately. If OCR cannot start, the capture "
+                "process logs the error and continues transcript/audio capture."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(8, 0))
 
     def _show_model_info(self):
         messagebox.showinfo(
@@ -1264,6 +1365,14 @@ class SettingsUI:
         self.audio_excitement_strong_ratio_var.set(str(config.get("audio_excitement_strong_ratio", 2.5)))
         self.audio_excitement_moderate_bonus_var.set(str(config.get("audio_excitement_moderate_bonus", 10)))
         self.audio_excitement_strong_bonus_var.set(str(config.get("audio_excitement_strong_bonus", 18)))
+        self.game_events_enabled_var.set(bool(config.get("game_events_enabled", True)))
+        self.game_player_name_var.set(str(config.get("game_player_name", "")))
+        self.game_tesseract_cmd_var.set(str(config.get("game_tesseract_cmd", "")))
+        self.game_ocr_left_var.set(str(config.get("game_ocr_left", 0.70)))
+        self.game_ocr_top_var.set(str(config.get("game_ocr_top", 0.04)))
+        self.game_ocr_width_var.set(str(config.get("game_ocr_width", 0.29)))
+        self.game_ocr_height_var.set(str(config.get("game_ocr_height", 0.30)))
+        self.game_ocr_interval_var.set(str(config.get("game_ocr_interval", 1.0)))
 
         self._display_preset_phrases(active_key)
 
@@ -1527,6 +1636,9 @@ class SettingsUI:
 
         config["remote_api_enabled"] = self.remote_api_enabled_var.get()
         config["audio_excitement_enabled"] = self.audio_excitement_enabled_var.get()
+        config["game_events_enabled"] = self.game_events_enabled_var.get()
+        config["game_player_name"] = self.game_player_name_var.get().strip()
+        config["game_tesseract_cmd"] = self.game_tesseract_cmd_var.get().strip()
 
         try:
             config["obs_port"] = int(self.obs_port_var.get().strip())
@@ -1540,6 +1652,11 @@ class SettingsUI:
             config["audio_excitement_strong_ratio"] = float(self.audio_excitement_strong_ratio_var.get().strip())
             config["audio_excitement_moderate_bonus"] = int(self.audio_excitement_moderate_bonus_var.get().strip())
             config["audio_excitement_strong_bonus"] = int(self.audio_excitement_strong_bonus_var.get().strip())
+            config["game_ocr_left"] = float(self.game_ocr_left_var.get().strip())
+            config["game_ocr_top"] = float(self.game_ocr_top_var.get().strip())
+            config["game_ocr_width"] = float(self.game_ocr_width_var.get().strip())
+            config["game_ocr_height"] = float(self.game_ocr_height_var.get().strip())
+            config["game_ocr_interval"] = float(self.game_ocr_interval_var.get().strip())
             caption_style_key = self._current_caption_style_key()
             caption_style_fields = self._collect_caption_style_fields()
         except ValueError as exc:
