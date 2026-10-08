@@ -11,6 +11,7 @@ since this is an unsigned free tool with no signing certificate.
     python build_app_windows.py
 """
 
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -31,15 +32,13 @@ BUILD_ROOT = SOURCE_ROOT / "build"
 APP_NAME = "OBSAIHighlights"
 VERSION = APP_VERSION
 
-# A pinned (not the rolling "latest") release from BtbN/FFmpeg-Builds -
-# an LGPL-only static build (no GPL code: x264/x265 are compiled out -
-# see that repo's variants/win64-lgpl.sh) that still includes NVENC
-# (scripts.d/50-ffnvcodec.sh has no LGPL exclusion) and libass (LGPL
-# itself) for the subtitle burn-in, which is everything render_clips.py
-# actually needs. Verified directly against render_styles.py's real
-# filter_complex before being wired in here.
-FFMPEG_RELEASE_TAG = "autobuild-2026-09-15-13-18"
-FFMPEG_ASSET_NAME = "ffmpeg-n9.0.1-30-g9258bacca5-win64-lgpl-9.0.zip"
+# A content-pinned Windows release from BtbN/FFmpeg-Builds. The upstream
+# "latest" tag moves, so verify the archive digest before extracting it.
+# This LGPL-only static build (no GPL code: x264/x265 are compiled out)
+# still includes NVENC and libass for the subtitle burn-in.
+FFMPEG_RELEASE_TAG = "latest"
+FFMPEG_ASSET_NAME = "ffmpeg-n9.0-latest-win64-lgpl-9.0.zip"
+FFMPEG_SHA256 = "8100c1a2b25e19a5c55ed94f1b00780bb650050afdbfce442b2045eb79c12c9d"
 FFMPEG_DOWNLOAD_URL = (
     f"https://github.com/BtbN/FFmpeg-Builds/releases/download/"
     f"{FFMPEG_RELEASE_TAG}/{FFMPEG_ASSET_NAME}"
@@ -70,6 +69,16 @@ def _ensure_bundled_ffmpeg():
         zip_path = Path(temp_dir) / FFMPEG_ASSET_NAME
 
         urllib.request.urlretrieve(FFMPEG_DOWNLOAD_URL, zip_path)
+        hasher = hashlib.sha256()
+        with open(zip_path, "rb") as downloaded:
+            for chunk in iter(lambda: downloaded.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        digest = hasher.hexdigest()
+        if digest != FFMPEG_SHA256:
+            raise RuntimeError(
+                f"Downloaded ffmpeg archive SHA-256 mismatch: expected "
+                f"{FFMPEG_SHA256}, got {digest}"
+            )
 
         with zipfile.ZipFile(zip_path) as archive:
             exe_member = next(
@@ -185,6 +194,7 @@ def _verify_outputs():
 
 def _find_inno_compiler():
     candidates = [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
         Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
         / "Inno Setup 6"
         / "ISCC.exe",
