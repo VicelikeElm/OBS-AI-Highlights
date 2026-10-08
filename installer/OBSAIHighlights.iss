@@ -1,7 +1,12 @@
 #define MyAppName "OBS AI Highlights"
-#define MyAppVersion "1.0.5"
+#define MyAppVersion "1.0.6"
 #define MyAppPublisher "OBS AI Highlights"
 #define MyAppExeName "OBSAIHighlights.exe"
+#ifdef AppOnlyUpdate
+  #define OutputBaseFilename "OBSAIHighlights-Update-v" + MyAppVersion
+#else
+  #define OutputBaseFilename "OBSAIHighlights-Setup-v" + MyAppVersion
+#endif
 
 [Setup]
 AppId={{9F3E9B7A-6C2D-4E1A-9D3F-2B6C7A1E5F40}
@@ -14,7 +19,7 @@ DisableProgramGroupPage=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\installer-output
-OutputBaseFilename=OBSAIHighlights-Setup-v{#MyAppVersion}
+OutputBaseFilename={#OutputBaseFilename}
 SetupIconFile=..\icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -32,7 +37,13 @@ VersionInfoCompany={#MyAppPublisher}
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
+#ifdef AppOnlyUpdate
+Source: "..\dist\OBSAIHighlights\OBSAIHighlights.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\OBSAIHighlights\_internal\assets\*"; DestDir: "{app}\_internal\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\OBSAIHighlights\_internal\profiles\*"; DestDir: "{app}\_internal\profiles"; Flags: ignoreversion recursesubdirs createallsubdirs
+#else
 Source: "..\dist\OBSAIHighlights\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 
 [Icons]
 Name: "{group}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"

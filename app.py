@@ -71,6 +71,16 @@ def _parse_version(text):
     return tuple(parts)
 
 
+def _select_update_asset(assets):
+    """Prefer the small app-only update; older releases still use installers."""
+    for prefix in ("OBSAIHighlights-Update-", "OBSAIHighlights-Setup-"):
+        for asset in assets:
+            name = asset.get("name", "")
+            if name.startswith(prefix) and name.endswith(".exe"):
+                return asset.get("browser_download_url"), asset.get("size")
+    return None, None
+
+
 def _fetch_latest_release():
     url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
     request = urllib.request.Request(
@@ -87,15 +97,7 @@ def _fetch_latest_release():
     tag_name = data.get("tag_name", "")
     html_url = data.get("html_url", "")
 
-    asset_url = None
-    asset_size = None
-
-    for asset in data.get("assets", []):
-        name = asset.get("name", "")
-        if name.startswith("OBSAIHighlights-Setup-") and name.endswith(".exe"):
-            asset_url = asset.get("browser_download_url")
-            asset_size = asset.get("size")
-            break
+    asset_url, asset_size = _select_update_asset(data.get("assets", []))
 
     return tag_name, html_url, asset_url, asset_size
 
@@ -161,6 +163,7 @@ class MainApp:
         self._latest_asset_size = None
 
         notebook = ttk.Notebook(root)
+        self.main_notebook = notebook
         notebook.pack(fill="both", expand=True, padx=12, pady=12)
 
         run_tab = ttk.Frame(notebook, padding=12)
@@ -198,34 +201,80 @@ class MainApp:
     # -----------------------------------------------------------
 
     def _build_run_tab(self, parent):
-        button_row = ttk.Frame(parent)
-        button_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(
+            parent,
+            text="Capture the good moments. OBS AI Highlights will save clips for you to review.",
+            wraplength=700,
+        ).pack(anchor="w", pady=(0, 12))
+
+        quick_start = ttk.LabelFrame(parent, text="Before you start", padding=10)
+        quick_start.pack(fill="x", pady=(0, 12))
+        ttk.Label(
+            quick_start,
+            text=(
+                "1. Open OBS and start its Replay Buffer.\n"
+                "2. Choose your content preset in Settings if needed.\n"
+                "3. Start capture below, then do your thing."
+            ),
+            justify="left",
+        ).pack(anchor="w")
+
+        action_row = ttk.Frame(parent)
+        action_row.pack(fill="x", pady=(0, 8))
 
         self.capture_button = ttk.Button(
-            button_row,
-            text="Start Highlight Capture",
+            action_row,
+            text="Start Capturing Highlights",
             command=lambda: self._start_worker("capture"),
+            padding=(12, 8),
         )
         self.capture_button.pack(side="left")
 
         self.stop_button = ttk.Button(
-            button_row,
-            text="Stop",
+            action_row,
+            text="Stop Capture",
             command=self._stop_worker,
             state="disabled",
         )
         self.stop_button.pack(side="left", padx=(8, 0))
 
+        ttk.Button(
+            action_row,
+            text="Settings",
+            command=lambda: self.main_notebook.select(3),
+        ).pack(side="right")
+
+        self.status_label = ttk.Label(
+            parent,
+            text="Ready. Start OBS Replay Buffer, then begin capture.",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        self.status_label.pack(fill="x", pady=(0, 4))
+
+        self.next_step_label = ttk.Label(
+            parent,
+            text="Saved clips will appear in the Clips tab.",
+            wraplength=700,
+        )
+        self.next_step_label.pack(fill="x", pady=(0, 10))
+
+        processing = ttk.LabelFrame(parent, text="After capture", padding=8)
+        processing.pack(fill="x", pady=(0, 8))
+        ttk.Label(
+            processing,
+            text="Choose what happens to saved clips when capture stops:",
+        ).pack(anchor="w", pady=(0, 4))
+
         self.verify_button = ttk.Button(
-            button_row,
-            text="Verify Clips",
+            processing,
+            text="Prepare clips for review",
             command=lambda: self._start_worker("verify"),
         )
-        self.verify_button.pack(side="left", padx=(20, 0))
+        self.verify_button.pack(side="left")
 
         self.render_button = ttk.Button(
-            button_row,
-            text="Render Clips",
+            processing,
+            text="Finish approved clips",
             command=lambda: self._start_worker("render"),
         )
         self.render_button.pack(side="left", padx=(8, 0))
@@ -235,32 +284,33 @@ class MainApp:
         self.auto_verify_var = tk.BooleanVar(value=bool(pipeline_config.get("auto_verify", True)))
         self.auto_render_var = tk.BooleanVar(value=bool(pipeline_config.get("auto_render", True)))
 
-        pipeline_row = ttk.Frame(parent)
-        pipeline_row.pack(fill="x", pady=(0, 10))
-
         ttk.Checkbutton(
-            pipeline_row,
-            text="Auto Verify after capture",
+            processing,
+            text="Automatically prepare clips for review after capture",
             variable=self.auto_verify_var,
             command=self._save_pipeline_settings,
-        ).pack(side="left")
+        ).pack(anchor="w", pady=(6, 0))
 
         ttk.Checkbutton(
-            pipeline_row,
-            text="Auto Render after verify (moves finished clips to Ready)",
+            processing,
+            text="Automatically finish clips after they are approved",
             variable=self.auto_render_var,
             command=self._save_pipeline_settings,
-        ).pack(side="left", padx=(16, 0))
+        ).pack(anchor="w")
 
-        self.status_label = ttk.Label(parent, text="Idle.")
-        self.status_label.pack(fill="x", pady=(0, 6))
+        self.game_status_label = ttk.Label(parent, text="Game events: checking for a supported game...")
+        self.game_status_label.pack(anchor="w", pady=(0, 6))
 
-        self.game_status_label = ttk.Label(parent, text="Game detection: checking...")
-        self.game_status_label.pack(fill="x", pady=(0, 6))
+        log_header = ttk.Frame(parent)
+        log_header.pack(fill="x", pady=(4, 0))
+        self.log_toggle_button = ttk.Button(
+            log_header,
+            text="Show activity details",
+            command=self._toggle_activity_log,
+        )
+        self.log_toggle_button.pack(side="left")
 
         log_frame = ttk.Frame(parent)
-        log_frame.pack(fill="both", expand=True)
-
         self.log_text = tk.Text(
             log_frame,
             state="disabled",
@@ -271,6 +321,18 @@ class MainApp:
         self.log_text.configure(yscrollcommand=scrollbar.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self.activity_log_frame = log_frame
+        self._activity_log_visible = False
+
+    def _toggle_activity_log(self):
+        if self._activity_log_visible:
+            self.activity_log_frame.pack_forget()
+            self.log_toggle_button.configure(text="Show activity details")
+            self._activity_log_visible = False
+        else:
+            self.activity_log_frame.pack(fill="both", expand=True, pady=(6, 0))
+            self.log_toggle_button.configure(text="Hide activity details")
+            self._activity_log_visible = True
 
     def _save_pipeline_settings(self):
         # Read-modify-write against the current on-disk config rather
@@ -1139,7 +1201,8 @@ class MainApp:
                 self.update_now_button.configure(state="normal")
             else:
                 self.download_progress_label.configure(
-                    text="No installer asset found on that release - use View Release Notes instead."
+                    text="No update package or installer found on that release - "
+                    "use View Release Notes instead."
                 )
         else:
             self.update_status_label.configure(text="You're up to date.")
@@ -1246,7 +1309,24 @@ class MainApp:
             return
 
         self._append_log(f"--- Starting {WORKER_LABELS[role]} ---\n")
-        self.status_label.configure(text=f"Running: {WORKER_LABELS[role]}")
+        status_text = {
+            "capture": "Capture is running. OBS AI Highlights is listening for moments to save.",
+            "verify": "Preparing saved clips for review...",
+            "render": "Finishing approved clips...",
+        }
+        self.status_label.configure(text=status_text[role])
+        if role == "capture":
+            self.next_step_label.configure(
+                text="Keep OBS Replay Buffer running. Select Stop Capture when you're done."
+            )
+        elif role == "verify":
+            self.next_step_label.configure(
+                text="This can take a little while. You can review the prepared clips in the Clips tab."
+            )
+        else:
+            self.next_step_label.configure(
+                text="This can take a little while. Finished clips will appear in your output folder."
+            )
 
         command = app_config.worker_launch_command(role)
 
@@ -1264,7 +1344,10 @@ class MainApp:
             )
         except Exception as exc:
             self._append_log(f"--- Failed to start {WORKER_LABELS[role]}: {exc} ---\n")
-            self.status_label.configure(text="Idle.")
+            self.status_label.configure(text="Couldn't start that task.")
+            self.next_step_label.configure(text="Show activity details below for the error.")
+            if not self._activity_log_visible:
+                self._toggle_activity_log()
             return
 
         self.active_process = process
@@ -1308,7 +1391,23 @@ class MainApp:
         role = self.active_role
 
         self._append_log(f"--- {WORKER_LABELS.get(role, role)} finished (exit code {return_code}) ---\n")
-        self.status_label.configure(text="Idle.")
+        if return_code == 0:
+            status_text = {
+                "capture": "Capture finished.",
+                "verify": "Clip preparation finished.",
+                "render": "Clip rendering finished.",
+            }
+            self.status_label.configure(text=status_text.get(role, "Task finished."))
+            self.next_step_label.configure(
+                text="Open the Clips tab to review your saved clips and find anything that's ready."
+            )
+        else:
+            self.status_label.configure(text="That task ended with an error.")
+            self.next_step_label.configure(
+                text="Show activity details below, then check your OBS and folder settings."
+            )
+            if not self._activity_log_visible:
+                self._toggle_activity_log()
 
         self.active_process = None
         self.active_role = None

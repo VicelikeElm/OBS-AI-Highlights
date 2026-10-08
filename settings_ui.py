@@ -370,26 +370,20 @@ class SettingsUI:
 
         preset_tab = ttk.Frame(notebook, padding=12)
         connection_tab = ttk.Frame(notebook, padding=12)
-        model_tab = ttk.Frame(notebook, padding=12)
-        game_events_tab = ttk.Frame(notebook, padding=12)
         caption_tab = ttk.Frame(notebook, padding=12)
-        scene_rules_tab = ttk.Frame(notebook, padding=12)
+        advanced_tab = ttk.Frame(notebook, padding=12)
         about_tab = ttk.Frame(notebook, padding=12)
 
-        notebook.add(preset_tab, text="Preset & Phrases")
+        notebook.add(preset_tab, text="Preset")
         notebook.add(connection_tab, text="OBS & Folders")
-        notebook.add(model_tab, text="Whisper & Thresholds")
-        notebook.add(game_events_tab, text="Game Events")
         notebook.add(caption_tab, text="Video Style")
-        notebook.add(scene_rules_tab, text="Scene Rules")
+        notebook.add(advanced_tab, text="Advanced")
         notebook.add(about_tab, text="About")
 
         self._build_preset_tab(preset_tab)
         self._build_connection_tab(connection_tab)
-        self._build_model_tab(model_tab)
-        self._build_game_events_tab(game_events_tab)
         self._build_caption_style_tab(caption_tab)
-        self._build_scene_rules_tab(scene_rules_tab)
+        self._build_advanced_tab(advanced_tab)
         self._build_about_tab(about_tab)
 
         button_row = ttk.Frame(outer, padding=(0, 12, 0, 0))
@@ -397,7 +391,7 @@ class SettingsUI:
 
         ttk.Button(
             button_row,
-            text="Save",
+            text="Save Settings",
             command=self._save,
         ).pack(side="right")
 
@@ -442,8 +436,6 @@ class SettingsUI:
         return inner
 
     def _build_preset_tab(self, parent):
-        parent = self._make_scrollable(parent)
-
         top_row = ttk.Frame(parent)
         top_row.pack(fill="x", pady=(0, 6))
 
@@ -457,6 +449,53 @@ class SettingsUI:
         )
         self.preset_combo.pack(side="left", padx=(8, 0))
         self.preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_preset_changed())
+
+        ttk.Label(
+            parent,
+            text=(
+                "Choose a ready-made preset to get started. Most people can leave the other "
+                "settings as they are. Custom presets and phrase tuning are in Advanced."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(anchor="w", pady=(10, 0))
+
+        self._refresh_preset_dropdown_values()
+
+    def _build_advanced_tab(self, parent):
+        ttk.Label(
+            parent,
+            text=(
+                "These options are for fine-tuning. The app works with the defaults; "
+                "change these only when you need more control."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(anchor="w", pady=(0, 10))
+
+        notebook = ttk.Notebook(parent)
+        notebook.pack(fill="both", expand=True)
+
+        preset_tab = ttk.Frame(notebook, padding=12)
+        model_tab = ttk.Frame(notebook, padding=12)
+        game_events_tab = ttk.Frame(notebook, padding=12)
+        audio_tab = ttk.Frame(notebook, padding=12)
+        scene_rules_tab = ttk.Frame(notebook, padding=12)
+
+        notebook.add(preset_tab, text="Custom Presets")
+        notebook.add(model_tab, text="Scoring & Models")
+        notebook.add(game_events_tab, text="Game Events")
+        notebook.add(audio_tab, text="Audio & Integrations")
+        notebook.add(scene_rules_tab, text="Scene Rules")
+
+        self._build_preset_editor_tab(preset_tab)
+        self._build_model_tab(model_tab)
+        self._build_game_events_tab(game_events_tab)
+        self._build_audio_integrations_tab(audio_tab)
+        self._build_scene_rules_tab(scene_rules_tab)
+
+    def _build_preset_editor_tab(self, parent):
+        parent = self._make_scrollable(parent)
 
         profile_button_row = ttk.Frame(parent)
         profile_button_row.pack(fill="x", pady=(0, 10))
@@ -486,8 +525,6 @@ class SettingsUI:
         )
         hint.pack(fill="x", pady=(0, 10))
 
-        self._refresh_preset_dropdown_values()
-
         for field, label in PHRASE_LIST_FIELDS:
             ttk.Label(parent, text=label).pack(fill="x")
             text_widget = tk.Text(parent, height=3, wrap="word")
@@ -503,6 +540,14 @@ class SettingsUI:
         self.whisper_prompt_widget = prompt_widget
 
     def _build_connection_tab(self, parent):
+        parent = self._make_scrollable(parent)
+        ttk.Label(
+            parent,
+            text="Connect OBS and choose where recordings and finished clips are stored.",
+            wraplength=680,
+            foreground="#888888",
+        ).pack(anchor="w", pady=(0, 10))
+
         self._add_labeled_entry(parent, "OBS host", self.obs_host_var)
         self._add_labeled_entry(parent, "OBS port", self.obs_port_var)
 
@@ -539,30 +584,35 @@ class SettingsUI:
             foreground="#888888",
         ).pack(fill="x", pady=(0, 8))
 
+    def _build_audio_integrations_tab(self, parent):
+        parent = self._make_scrollable(parent)
+        ttk.Label(
+            parent,
+            text=(
+                "Optional controls for choosing specific audio hardware or connecting "
+                "Stream Deck and other local automation tools."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(anchor="w", pady=(0, 10))
+
         self._add_audio_device_row(parent)
         self._add_labeled_entry(parent, "Audio device fallback index", self.audio_device_fallback_var)
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
 
         self._add_labeled_checkbox(
-            parent, "Remote API enabled (Stream Deck / Companion / etc.)", self.remote_api_enabled_var
+            parent, "Enable local API (Stream Deck / Companion)", self.remote_api_enabled_var
         )
         self._add_labeled_spinbox(parent, "Remote API port", self.remote_api_port_var, 1024, 65535, 1)
         ttk.Label(
             parent,
             text=(
-                "Only reachable from this machine (127.0.0.1), never the network. "
-                "Only active while Highlight Capture is running - see the README for the endpoints."
+                "Only reachable from this computer and only while Highlight Capture is running."
             ),
             wraplength=680,
             foreground="#888888",
         ).pack(fill="x", pady=(0, 8))
-
-        ttk.Button(
-            parent,
-            text="Save",
-            command=self._save,
-        ).pack(anchor="e", pady=(16, 0))
 
     def _build_model_tab(self, parent):
         self._add_labeled_combo(parent, "Whisper model (live capture)", self.whisper_model_var, WHISPER_MODEL_OPTIONS)
@@ -795,7 +845,8 @@ class SettingsUI:
             foreground="#888888",
         ).pack(fill="x", pady=(0, 10))
 
-        columns = ttk.Frame(parent)
+        self.caption_customization_frame = ttk.Frame(parent)
+        columns = ttk.Frame(self.caption_customization_frame)
         columns.pack(fill="x")
 
         left = ttk.Frame(columns)
@@ -854,11 +905,16 @@ class SettingsUI:
         ])
 
         ttk.Label(
-            parent, text="Preview (approximate style only - not an actual video render)"
+            self.caption_customization_frame,
+            text="Preview (approximate style only - not an actual video render)"
         ).pack(anchor="w", pady=(14, 4))
 
         self.caption_preview_canvas = tk.Canvas(
-            parent, height=140, background="#202020", highlightthickness=1, highlightbackground="#555555"
+            self.caption_customization_frame,
+            height=140,
+            background="#202020",
+            highlightthickness=1,
+            highlightbackground="#555555",
         )
         self.caption_preview_canvas.pack(fill="x")
 
@@ -866,7 +922,6 @@ class SettingsUI:
         button_row.pack(fill="x", pady=(12, 0))
 
         ttk.Button(button_row, text="Refresh Preview", command=self._update_caption_preview).pack(side="left")
-        ttk.Button(button_row, text="Save", command=self._save).pack(side="right")
 
     def _current_theme_key(self):
         return ui_theme.THEME_KEY_BY_LABEL.get(self.theme_var.get(), ui_theme.DEFAULT_THEME)
@@ -957,6 +1012,11 @@ class SettingsUI:
             except tk.TclError:
                 pass
 
+        if is_custom:
+            self.caption_customization_frame.pack(fill="x", pady=(8, 0))
+        else:
+            self.caption_customization_frame.pack_forget()
+
     def _collect_caption_style_fields(self):
         return {
             "font_name": self.caption_font_name_var.get().strip() or "Arial",
@@ -1026,7 +1086,6 @@ class SettingsUI:
         button_row.pack(fill="x", pady=(10, 0))
 
         ttk.Button(button_row, text="+ Add Rule", command=self._add_scene_rule_row).pack(side="left")
-        ttk.Button(button_row, text="Save", command=self._save).pack(side="right")
 
     def _preset_labels_for_rules(self):
         return list(self._preset_key_by_label.keys())

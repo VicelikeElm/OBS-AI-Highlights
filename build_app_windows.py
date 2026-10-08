@@ -11,6 +11,7 @@ since this is an unsigned free tool with no signing certificate.
     python build_app_windows.py
 """
 
+import argparse
 import hashlib
 import importlib.util
 import os
@@ -210,7 +211,7 @@ def _find_inno_compiler():
     return None
 
 
-def _build_installer_if_available():
+def _build_installer_if_available(app_only_update=False):
     compiler = _find_inno_compiler()
 
     if compiler is None:
@@ -239,10 +240,43 @@ def _build_installer_if_available():
     print("Installer built:")
     print(" -", installer)
 
+    if app_only_update:
+        update_installer = (
+            SOURCE_ROOT
+            / "installer-output"
+            / f"OBSAIHighlights-Update-v{VERSION}.exe"
+        )
+        _run([
+            str(compiler),
+            "/DAppOnlyUpdate=1",
+            str(SOURCE_ROOT / "installer" / "OBSAIHighlights.iss"),
+        ])
+
+        if not update_installer.exists():
+            raise RuntimeError(
+                "Inno Setup completed but the expected app-only update is missing:\n"
+                + str(update_installer)
+            )
+
+        print()
+        print("App-only update built (use only when bundled dependencies are unchanged):")
+        print(" -", update_installer)
+
     return installer
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Build the OBS AI Highlights Windows app.")
+    parser.add_argument(
+        "--app-only-update",
+        action="store_true",
+        help=(
+            "Also build a small update package that replaces only the app executable "
+            "and app assets, leaving bundled runtime dependencies unchanged."
+        ),
+    )
+    args = parser.parse_args()
+
     if os.name != "nt":
         print("This build only runs on Windows.")
         raise SystemExit(1)
@@ -255,7 +289,7 @@ def main():
     _ensure_bundled_ffmpeg()
     _run(_pyinstaller_command())
     _verify_outputs()
-    _build_installer_if_available()
+    _build_installer_if_available(app_only_update=args.app_only_update)
 
     print()
     print("=" * 70)

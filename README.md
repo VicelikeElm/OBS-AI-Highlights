@@ -74,13 +74,15 @@ Each stage can run on its own, or all three from one app - see below.
 Run the installer (`OBSAIHighlights-Setup-vX.Y.Z.exe`) and launch **OBS AI
 Highlights** from the Start Menu. One window, five tabs:
 
-- **Run** — start/stop live highlight capture, with Auto Verify/Auto
-  Render checkboxes controlling what happens automatically once a
-  capture ends, plus manual Verify Clips/Render Clips buttons and a live
-  log of what's happening. The Run tab also reports a detected supported
-  game and its profile; Rainbow Six Siege detection is included as the
-  first game profile. During capture, the optional game-event engine OCRs
-  a configurable primary-display region, scores recognized events and
+- **Run** — a quick-start checklist reminds you to start OBS Replay
+  Buffer, choose a preset if needed, then start capture. Plain-language
+  status messages explain what the app is doing and where to go next.
+  Automatic clip preparation and rendering can be enabled here; manual
+  actions remain available, and technical activity details are hidden
+  until requested. The Run tab also reports a detected supported game
+  and its profile; Rainbow Six Siege detection is included as the first
+  game profile. During capture, the optional game-event engine OCRs a
+  configurable primary-display region, scores recognized events and
   achievements alongside transcript/audio scores, and stores that context
   with saved clips.
 - **Clips** — every detected clip in one list, across every pipeline
@@ -101,21 +103,21 @@ Highlights** from the Start Menu. One window, five tabs:
   good (or rejected) clips - useful for tuning a preset against real
   data instead of guessing. Rename or delete a session's stats record
   from here (clip files themselves aren't touched).
-- **Settings** — pick a preset, tune caption/render styling, set your OBS
-  connection details and password, point it at your recording/output
-  folders, set up Scene Rules (e.g. a "BRB" scene pauses clipping, a
-  "Gameplay" scene switches to the Gaming preset automatically), and
-  switch between a Dark and Light theme (on the About tab) - applies
-  instantly, no restart needed. Audio source can be **Loopback** (the
-  default - listens to whatever OBS sends to your speakers/headphones,
-  i.e. your whole program mix), **Microphone** (listens to a genuine
-  input device directly, useful if you'd rather transcribe just your own
-  mic instead of the full mix), or **Both** (listens to and mixes a
-  loopback device and a microphone at once, so a trigger phrase said
-  into either one still gets picked up); switching source type shows the
-  matching device picker(s).
+- **Settings** — choose a preset, connect OBS, pick recording/output
+  folders, and choose a video layout from the main settings tabs. The
+  **Advanced** tab groups optional controls: custom preset phrases,
+  Whisper/scoring choices, game-event OCR, audio devices and local
+  integrations, and Scene Rules (e.g. a "BRB" scene pauses clipping, a
+  "Gameplay" scene switches to the Gaming preset automatically). Most
+  users can leave these advanced options at their defaults. The Video
+  Style tab shows detailed caption controls only when **Custom** is
+  selected. Switch between Dark and Light themes on the About tab;
+  changes apply immediately.
 - **Updates** — checks automatically on launch, or on demand, and can
-  download and install a newer version without leaving the app.
+  download and install a newer version without leaving the app. When a
+  release includes an app-only update package, the updater downloads that
+  instead of the full installer; otherwise it falls back to the full
+  installer.
 
 ffmpeg is bundled with the installer (an LGPL-only static build - see
 [Third-party licenses](#third-party-licenses) below), so there's nothing to
@@ -143,7 +145,7 @@ installed, so it works without admin rights and survives a reinstall.
 
 Game-event OCR also requires the Tesseract OCR application. Install
 Tesseract for Windows, then leave its executable on `PATH` or set its
-path in Settings → Game Events. Configure the OCR region as normalized
+path in Settings → Advanced → Game Events. Configure the OCR region as normalized
 left/top/width/height values against the primary display, and enter your
 in-game player name for kill/death attribution. If Tesseract is unavailable,
 normal transcript/audio capture continues and the error is logged.
@@ -171,9 +173,9 @@ python render_clips.py       # render verified clips into finished vertical shor
 
 While Highlight Capture is running, a small local HTTP API is available
 for external tools to trigger and query it - configurable (enable/port)
-in Settings → OBS & Folders. Bound to `127.0.0.1` only; it's never
-reachable from the network, and it isn't available when capture isn't
-running.
+in Settings → Advanced → Audio & Integrations. Bound to `127.0.0.1` only;
+it's never reachable from the network, and it isn't available when
+capture isn't running.
 
 ```
 GET  /status              -> { "capturing": true, "preset": "Gaming", "paused": false, "clips_saved": 3 }
@@ -202,6 +204,23 @@ doesn't pollute a shared venv):
 ```bash
 python build_app_windows.py
 ```
+
+For code/resource-only releases with no changes to Python, PyInstaller,
+or other bundled runtime dependencies, build the optional smaller update
+package too:
+
+```bash
+python build_app_windows.py --app-only-update
+```
+
+This produces both the normal full installer and
+`installer-output/OBSAIHighlights-Update-vX.Y.Z.exe`. Attach both to the
+GitHub Release to let existing installs take the smaller update while
+new installs use the full installer. The app-only package replaces the
+executable and app assets, retaining FFmpeg and bundled libraries already
+installed. Do not publish that package when runtime dependencies change;
+publish only the full installer so the updater automatically falls back
+to it.
 
 The first run also downloads and caches a static ffmpeg build (~160MB,
 see below) under `vendor/ffmpeg/` - not committed to git, same as
