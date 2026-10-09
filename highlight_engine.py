@@ -38,6 +38,7 @@ import remote_api
 import session_stats
 import game_detector
 import game_events
+import game_timeline
 from round_tracker import RoundTracker
 
 
@@ -781,6 +782,16 @@ def read_obs_status(client):
                 False
             )
         )
+        record_duration_ms = getattr(record_status, "output_duration", None)
+        try:
+            record_duration_seconds = (
+                max(0.0, float(record_duration_ms) / 1000.0)
+                if recording and record_duration_ms is not None
+                else 0.0
+            )
+        except (TypeError, ValueError):
+            record_duration_seconds = 0.0
+        recording_file = str(getattr(record_status, "output_path", "") or "")
 
         replay = bool(
             getattr(
@@ -816,6 +827,8 @@ def read_obs_status(client):
             "connected": True,
             "streaming": streaming,
             "recording": recording,
+            "record_duration_seconds": record_duration_seconds,
+            "recording_file": recording_file,
             "replay": replay,
             "scene_name": scene_name,
         }
@@ -826,6 +839,8 @@ def read_obs_status(client):
             "connected": False,
             "streaming": False,
             "recording": False,
+            "record_duration_seconds": 0.0,
+            "recording_file": "",
             "replay": False,
             "scene_name": "",
         }
@@ -1841,6 +1856,10 @@ def run_live_sermon(
     game_clip_after_seconds = 5
     pending_game_snapshot = None
     pending_game_save_at = None
+    recording_timeline = game_timeline.RecordingTimeline(
+        client,
+        embed_chapters=CONFIG.get("embed_recording_chapters", False),
+    )
 
     def start_game_event_monitor():
         nonlocal active_game, game_tracker, game_event_thread
@@ -1937,6 +1956,12 @@ def run_live_sermon(
 
                 session_running = False
                 break
+
+            recording_timeline.update(
+                status,
+                active_game.get("game_name", "") if active_game else "",
+                active_game.get("profile_name", "") if active_game else "",
+            )
 
             # If we started Replay Buffer automatically,
             # stop it once stream + recording have ended.
@@ -2049,6 +2074,18 @@ def run_live_sermon(
                     continue
 
                 session_stats.record_game_event(session_id, payload, snapshot)
+                recording_timeline.add_marker(
+                    payload.get("type", "GAME_EVENT"),
+                    payload.get("text", payload.get("type", "Game event")),
+                    snapshot.get("game", ""),
+                    snapshot.get("profile", ""),
+                    event_timestamp=payload.get("timestamp"),
+                )
+                if recording_timeline.last_chapter_error:
+                    log(
+                        "WARNING: Could not add native OBS chapter: "
+                        f"{recording_timeline.last_chapter_error}"
+                    )
                 game_context = snapshot
                 log(f"Game event: {payload['type']} - {payload.get('text', '')}")
                 if (
@@ -2138,6 +2175,22 @@ def run_live_sermon(
                     log(
                         f"Preset switched via remote API: {new_label}"
                     )
+
+                for marker_label in remote_state.consume_timeline_markers():
+                    if recording_timeline.add_marker(
+                        "MANUAL",
+                        marker_label,
+                        game_context.get("game", "") if game_context else "",
+                        game_context.get("profile", "") if game_context else "",
+                    ):
+                        log(f"Recording marker added: {marker_label}")
+                        if recording_timeline.last_chapter_error:
+                            log(
+                                "WARNING: Could not add native OBS chapter: "
+                                f"{recording_timeline.last_chapter_error}"
+                            )
+                    else:
+                        log("Manual recording marker ignored; OBS is not recording.")
 
                 if remote_state.consume_manual_highlight_request():
 
@@ -2382,7 +2435,6 @@ def run_live_sermon(
                 )
 
             finally:
-
                 try:
 
                     os.remove(
@@ -2761,6 +2813,8 @@ def run_live_sermon(
                 )
 
     finally:
+
+        recording_timeline.close()
 
         try:
             game_event_stop.set()

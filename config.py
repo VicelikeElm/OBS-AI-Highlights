@@ -56,10 +56,30 @@ def resource_path(*parts):
 
 
 def bundled_tesseract_path():
-    """Return the app-local Tesseract executable when installed with the app."""
+    """Find bundled or persistent per-user Tesseract with English data."""
     executable = resource_path("tesseract", "tesseract.exe")
     english_data = executable.parent / "tessdata" / "eng.traineddata"
-    return executable if executable.is_file() and english_data.is_file() else None
+    if executable.is_file() and english_data.is_file():
+        return executable
+
+    local_app_data = Path(
+        os.getenv("LOCALAPPDATA") or os.getenv("APPDATA") or BASE
+    )
+    installed_executable = (
+        local_app_data
+        / "OBS AI Highlights"
+        / "tesseract"
+        / "tesseract.exe"
+    )
+    installed_english_data = (
+        installed_executable.parent
+        / "tessdata"
+        / "eng.traineddata"
+    )
+    if installed_executable.is_file() and installed_english_data.is_file():
+        return installed_executable
+
+    return None
 
 
 try:
@@ -109,6 +129,7 @@ DEFAULTS = {
     "audio_excitement_moderate_bonus": 10,
     "audio_excitement_strong_bonus": 18,
     "game_events_enabled": True,
+    "embed_recording_chapters": False,
     "capture_mode": "game_events",
     "game_selection": "auto",
     "game_profiles": {},

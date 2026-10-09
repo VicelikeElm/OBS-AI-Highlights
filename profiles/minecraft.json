@@ -1,0 +1,27 @@
+{
+  "game_name": "Minecraft",
+  "profile_name": "Minecraft",
+  "process_names": [
+    "javaw.exe"
+  ],
+  "process_command_line_contains": {
+    "javaw.exe": [
+      "net.minecraft.client.main.Main",
+      "net.minecraft.launchwrapper.Launch"
+    ]
+  },
+  "ocr_region": {
+    "left": 0.68,
+    "top": 0.04,
+    "width": 0.30,
+    "height": 0.32
+  },
+  "event_patterns": {
+    "DEATH": [
+      "\\b{player}\\b.{0,80}\\b(?:was slain|was killed|died|fell|burned|drowned|blew up)\\b",
+      "\\b(?:slain|killed) by\\b.{0,80}\\b{player}\\b",
+      "\\byou died\\b",
+      "\\b(?:was slain|was killed|fell from a high place|hit the ground too hard|drowned|blew up)\\b"
+    ]
+  }
+}

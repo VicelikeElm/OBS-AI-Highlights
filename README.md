@@ -8,12 +8,16 @@
 
 Built by [Vice Media Solutions](assets/vivce_media_solutions.png).
 
-## What's new in v1.0.9
+## What's new in v1.1.0
 
-- Save game process names, player names, and OCR settings independently per game.
-- Choose which game events trigger clips and configure footage before and after them.
-- Filter clips by game or event tag, and review event counts, rounds, achievements,
-  and saved clips in game-session stats.
+- Add Minecraft Java, Minecraft Bedrock, and Destiny 2 profiles alongside
+  configurable per-game profiles and event controls.
+- Track game events and manual markers against full OBS recordings, with an
+  option to add native OBS chapters as events happen (OBS 30.2+ and Hybrid MP4).
+- Export recording timelines as Text, Final Cut Pro XML, Premiere Pro XML,
+  DaVinci Resolve EDL, or CSV.
+- Filter clips by game or event tag, and review event counts, rounds,
+  achievements, and saved clips in game-session stats.
 
 Watches OBS's replay buffer during a live stream, uses a live Whisper
 transcript - plus a live audio-loudness signal that catches reactions
@@ -91,7 +95,11 @@ Highlights** from the Start Menu. One window, five tabs:
   the installer.
   Rainbow Six Siege has event patterns. Tarkov process detection is included,
   but its OCR event patterns still need in-game verification before automatic
-  Tarkov event clips can be relied on.
+  Tarkov event clips can be relied on. Minecraft Java, Minecraft Bedrock,
+  and Destiny 2 profiles are included with conservative death-feed patterns;
+  validate their OCR region and visible event text in-game. Minecraft Java
+  detection checks the Java command line so unrelated Java applications are
+  not selected automatically.
   A quick-start checklist explains OBS Replay Buffer and the game/name
   settings. Plain-language status messages explain what the app is doing
   and where to go next.
@@ -108,7 +116,8 @@ Highlights** from the Start Menu. One window, five tabs:
   **Review clips** shortcut appears when clips are available. Empty Clips
   and Sessions views explain what to do next. The Run tab also reports a
   detected supported game and its profile. The game dropdown includes
-  Auto-detect, Rainbow Six Siege, Escape from Tarkov, and Custom. For a
+  Auto-detect, Rainbow Six Siege, Escape from Tarkov, Minecraft (Java),
+  Minecraft Bedrock, Destiny 2, and Custom. For a
   custom game, enter its display name and Windows process name; supported
   games can also override their detected process names. Each game's process
   names and in-game player name are saved separately and take effect on the
@@ -119,6 +128,18 @@ Highlights** from the Start Menu. One window, five tabs:
   window before and after an event. Defaults are 20 seconds before and
   5 seconds after, so set OBS Replay Buffer to at least 25 seconds. The AI
   audio/transcript mode can still use selected game events for extra context.
+- **Sessions** — recording-timeline sessions store OCR game events and
+  manual markers at their elapsed time in the ordinary OBS recording. Select
+  a timeline session to review its markers or export them for a video editor.
+  The export dropdown supports Text, Final Cut Pro XML, Premiere Pro XML,
+  DaVinci Resolve EDL, and CSV. Optionally enable
+  **Add native OBS chapters to full recordings** in Settings → Advanced → Game Events
+  to add each marker to the recording
+  while it is being made. OBS 30.2+ and the **Hybrid MP4** recording format
+  are required for VLC-visible chapters. Other formats still retain the
+  separate timeline and CSV export; Replay Buffer clips are not changed.
+  The local `/mark` API can add a manual marker from a Stream Deck or
+  Companion button.
 - **Clips** — every detected clip in one list, across every pipeline
   stage, with its score, status, duration, and detection reasons/full
   transcript. Play a clip in your default video player, Approve or
@@ -180,9 +201,11 @@ installed, so it works without admin rights and survives a reinstall.
 
 The Windows installer includes Tesseract OCR and English language data, so
 Game Highlights does not require a separate OCR download or system-wide
-installation. The optional
+installation. Tesseract is installed once under your Windows user profile
+and reused by subsequent app updates. Uninstall Tesseract separately from
+Windows Apps if you no longer want the shared OCR runtime. The optional
 Tesseract path in Settings → Advanced → Game Events can point to a different
-installation; leave it blank to use the bundled copy. Choose the game and
+installation; leave it blank to use the app-managed copy. Choose the game and
 enter your in-game player name on the Run tab. Configure the OCR region as
 normalized left/top/width/height values against the primary display if the
 event feed is not recognized. The per-game event checkboxes control which
@@ -212,7 +235,7 @@ python render_clips.py       # render verified clips into finished vertical shor
 
 ## Remote API (Stream Deck / Companion / AutoHotkey)
 
-While Highlight Capture is running, a small local HTTP API is available
+While either capture mode is running, a small local HTTP API is available
 for external tools to trigger and query it - configurable (enable/port)
 in Settings → Advanced → Audio & Integrations. Bound to `127.0.0.1` only;
 it's never reachable from the network, and it isn't available when
@@ -221,6 +244,7 @@ capture isn't running.
 ```
 GET  /status              -> { "capturing": true, "preset": "Gaming", "paused": false, "clips_saved": 3 }
 POST /highlight            -> save whatever's in the replay buffer right now, bypassing the phrase-scoring gate
+POST /mark                 -> mark the current time in an active OBS recording (optional JSON {"label":"Round win"})
 POST /pause                -> suspend automatic clip-saving
 POST /resume               -> resume automatic clip-saving
 POST /preset/<name>        -> switch the active preset (a built-in key like "gaming", or a URL-encoded
@@ -233,8 +257,15 @@ Example with `curl` (default port 8756):
 ```bash
 curl http://127.0.0.1:8756/status
 curl -X POST http://127.0.0.1:8756/highlight
+curl -X POST -H "Content-Type: application/json" -d "{\"label\":\"Round win\"}" http://127.0.0.1:8756/mark
 curl -X POST http://127.0.0.1:8756/preset/gaming
 ```
+
+`/mark` is consumed by the capture loop and only writes a marker while OBS
+is actively recording. OCR-detected game events are added to the same
+recording timeline automatically. With native OBS chapters enabled, both
+types are also sent to OBS at that moment. `/highlight` saves a Replay Buffer
+clip; timeline markers and chapters are for full recordings only.
 
 ## Building the Windows installer
 

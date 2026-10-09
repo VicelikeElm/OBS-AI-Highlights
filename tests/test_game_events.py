@@ -14,8 +14,8 @@ import verify_clips
 
 
 class FakeProcess:
-    def __init__(self, name):
-        self.info = {"name": name}
+    def __init__(self, name, cmdline=None):
+        self.info = {"name": name, "cmdline": cmdline or []}
 
 
 class GameEventTests(unittest.TestCase):
@@ -110,6 +110,28 @@ class GameEventTests(unittest.TestCase):
                     executable,
                 )
 
+    def test_installed_tesseract_is_reused_from_local_app_data(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            executable = root / "OBS AI Highlights" / "tesseract" / "tesseract.exe"
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            english_data = executable.parent / "tessdata" / "eng.traineddata"
+            english_data.parent.mkdir()
+            english_data.touch()
+            with (
+                patch.object(
+                    game_events.app_config,
+                    "resource_path",
+                    return_value=root / "not-bundled" / "tesseract.exe",
+                ),
+                patch.dict("os.environ", {"LOCALAPPDATA": str(root)}, clear=False),
+            ):
+                self.assertEqual(
+                    game_events.app_config.bundled_tesseract_path(),
+                    executable,
+                )
+
     def test_siege_process_detection_and_unknown_process(self):
         self.assertEqual(
             game_detector.detect_running_game([FakeProcess("RainbowSix.exe")])["profile_name"],
@@ -143,6 +165,56 @@ class GameEventTests(unittest.TestCase):
         )
 
         self.assertEqual(detected["profile_name"], "Tarkov")
+
+    def test_minecraft_java_detection_requires_a_minecraft_client_command(self):
+        self.assertIsNone(
+            game_detector.detect_running_game(
+                [FakeProcess("Minecraft.Windows.exe")],
+                selected_game="Minecraft",
+            )
+        )
+        self.assertIsNone(
+            game_detector.detect_running_game(
+                [FakeProcess("javaw.exe", ["unrelated.Main"])],
+                selected_game="Minecraft",
+            )
+        )
+        detected = game_detector.detect_running_game(
+            [FakeProcess("javaw.exe", ["javaw", "net.minecraft.client.main.Main"])],
+            selected_game="Minecraft",
+        )
+        self.assertEqual(detected["game_name"], "Minecraft")
+
+    def test_minecraft_bedrock_profile_is_detected_separately(self):
+        detected = game_detector.detect_running_game(
+            [FakeProcess("Minecraft.Windows.exe")],
+            selected_game="Minecraft Bedrock",
+        )
+        self.assertEqual(detected["game_name"], "Minecraft Bedrock")
+        self.assertEqual(detected["profile_name"], "Minecraft Bedrock")
+
+    def test_minecraft_and_destiny_profiles_parse_death_cues(self):
+        profiles = {
+            profile["game_name"]: profile
+            for profile in game_detector.load_game_profiles()
+        }
+        minecraft_events = parse_game_events(
+            "Alex was slain by Zombie",
+            player_name="Alex",
+            profile=profiles["Minecraft"],
+        )
+        destiny_events = parse_game_events(
+            "Guardian Down",
+            profile=profiles["Destiny 2"],
+        )
+        bedrock_events = parse_game_events(
+            "You died!",
+            profile=profiles["Minecraft Bedrock"],
+        )
+
+        self.assertEqual([event["type"] for event in minecraft_events], ["DEATH"])
+        self.assertEqual([event["type"] for event in destiny_events], ["DEATH"])
+        self.assertEqual([event["type"] for event in bedrock_events], ["DEATH"])
 
     def test_custom_game_uses_saved_name_and_process_name(self):
         detected = game_detector.detect_running_game(

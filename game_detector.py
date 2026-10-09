@@ -35,6 +35,17 @@ def load_game_profiles(profile_dir=None):
         ):
             raise ValueError(f"{path} must define at least one process name.")
 
+        command_line_checks = profile.get("process_command_line_contains", {})
+        if not isinstance(command_line_checks, dict) or any(
+            not isinstance(name, str)
+            or not isinstance(terms, list)
+            or not all(isinstance(term, str) and term for term in terms)
+            for name, terms in command_line_checks.items()
+        ):
+            raise ValueError(
+                f"{path} process_command_line_contains must map process names to text lists."
+            )
+
         event_patterns = profile.get("event_patterns", {})
         if not isinstance(event_patterns, dict) or any(
             not isinstance(patterns, list)
@@ -108,26 +119,41 @@ def detect_running_game(
             ]
             if normalized_names:
                 profile["process_names"] = normalized_names
-    processes = process_iter if process_iter is not None else psutil.process_iter(["name"])
+    processes = process_iter if process_iter is not None else psutil.process_iter(["name", "cmdline"])
 
-    process_names = {}
+    processes_by_name = {}
     for process in processes:
         try:
-            name = process.info.get("name")
+            process_info = process.info
+            name = process_info.get("name")
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
 
         if name:
-            process_names.setdefault(name.casefold(), name)
+            processes_by_name.setdefault(name.casefold(), []).append(process_info)
 
     for profile in profiles:
         for expected_name in profile["process_names"]:
-            process_name = process_names.get(expected_name.casefold())
-            if process_name:
+            candidates = processes_by_name.get(expected_name.casefold(), [])
+            command_line_checks = profile.get("process_command_line_contains", {})
+            required_terms = (
+                command_line_checks.get(expected_name.casefold(), [])
+                if isinstance(command_line_checks, dict)
+                else []
+            )
+            for candidate in candidates:
+                command_line = " ".join(
+                    str(argument) for argument in (candidate.get("cmdline") or [])
+                ).casefold()
+                if required_terms and not any(
+                    str(term).casefold() in command_line
+                    for term in required_terms
+                ):
+                    continue
                 return {
                     "game_name": profile["game_name"],
                     "profile_name": profile["profile_name"],
-                    "process_name": process_name,
+                    "process_name": candidate.get("name"),
                     "profile": profile,
                 }
 

@@ -322,6 +322,7 @@ class SettingsUI:
         self.audio_excitement_moderate_bonus_var = tk.StringVar()
         self.audio_excitement_strong_bonus_var = tk.StringVar()
         self.game_events_enabled_var = tk.BooleanVar()
+        self.embed_recording_chapters_var = tk.BooleanVar()
         self.game_player_name_var = tk.StringVar()
         self.game_tesseract_cmd_var = tk.StringVar()
         self.game_ocr_left_var = tk.StringVar()
@@ -672,6 +673,21 @@ class SettingsUI:
             text="Enable game event OCR during Highlight Capture",
             variable=self.game_events_enabled_var,
         ).pack(anchor="w", pady=(0, 8))
+        ttk.Checkbutton(
+            parent,
+            text="Add native OBS chapters to full recordings",
+            variable=self.embed_recording_chapters_var,
+        ).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            parent,
+            text=(
+                "Adds each game event or manual /mark to the active OBS recording as it happens. "
+                "Requires OBS 30.2+ and Recording Format = Hybrid MP4 for VLC-visible chapters. "
+                "Replay Buffer clips are not changed."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 8))
         ttk.Label(
             parent,
             text=(
@@ -1544,6 +1560,9 @@ class SettingsUI:
         self.audio_excitement_moderate_bonus_var.set(str(config.get("audio_excitement_moderate_bonus", 10)))
         self.audio_excitement_strong_bonus_var.set(str(config.get("audio_excitement_strong_bonus", 18)))
         self.game_events_enabled_var.set(bool(config.get("game_events_enabled", True)))
+        self.embed_recording_chapters_var.set(
+            bool(config.get("embed_recording_chapters", False))
+        )
         self.load_game_profile_fields(
             app_config.get_game_profile_settings(
                 config,
@@ -1814,6 +1833,9 @@ class SettingsUI:
         config["remote_api_enabled"] = self.remote_api_enabled_var.get()
         config["audio_excitement_enabled"] = self.audio_excitement_enabled_var.get()
         config["game_events_enabled"] = self.game_events_enabled_var.get()
+        config["embed_recording_chapters"] = (
+            self.embed_recording_chapters_var.get()
+        )
 
         try:
             config["obs_port"] = int(self.obs_port_var.get().strip())

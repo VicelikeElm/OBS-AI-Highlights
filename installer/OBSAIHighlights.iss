@@ -1,5 +1,5 @@
 #define MyAppName "OBS AI Highlights"
-#define MyAppVersion "1.0.9"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "OBS AI Highlights"
 #define MyAppExeName "OBSAIHighlights.exe"
 #ifdef AppOnlyUpdate
@@ -56,8 +56,6 @@ Name: "{autodesktop}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"; Work
 ; silently (see app.py's _launch_installer_and_exit()) and relies on
 ; this entry to relaunch it afterward, same as an interactive install's
 ; "Launch..." checkbox already does.
-Filename: "{tmp}\tesseract-ocr-w64-setup-5.4.0.20240606.exe"; Parameters: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=""{app}\_internal\tesseract"""; StatusMsg: "Installing bundled Tesseract OCR..."; Flags: runhidden waituntilterminated; Check: not (FileExists(ExpandConstant('{app}\_internal\tesseract\tesseract.exe')) and FileExists(ExpandConstant('{app}\_internal\tesseract\tessdata\eng.traineddata')))
+; Keep Tesseract outside {app}: upgrades uninstall the previous app version.
+Filename: "{tmp}\tesseract-ocr-w64-setup-5.4.0.20240606.exe"; Parameters: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=""{localappdata}\OBS AI Highlights\tesseract"""; StatusMsg: "Installing Tesseract OCR (first install only)..."; Flags: runhidden waituntilterminated; Check: not (FileExists(ExpandConstant('{localappdata}\OBS AI Highlights\tesseract\tesseract.exe')) and FileExists(ExpandConstant('{localappdata}\OBS AI Highlights\tesseract\tessdata\eng.traineddata')))
 Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"; Description: "Launch OBS AI Highlights"; Flags: nowait postinstall
-
-[UninstallRun]
-Filename: "{app}\_internal\tesseract\unins000.exe"; Parameters: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"; Flags: runhidden waituntilterminated; Check: FileExists(ExpandConstant('{app}\_internal\tesseract\unins000.exe'))

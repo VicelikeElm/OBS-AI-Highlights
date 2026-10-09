@@ -1,0 +1,22 @@
+{
+  "game_name": "Minecraft Bedrock",
+  "profile_name": "Minecraft Bedrock",
+  "process_names": [
+    "Minecraft.Windows.exe"
+  ],
+  "ocr_region": {
+    "left": 0.68,
+    "top": 0.04,
+    "width": 0.30,
+    "height": 0.32
+  },
+  "event_patterns": {
+    "DEATH": [
+      "\\byou died\\b",
+      "\\byou were slain\\b",
+      "\\byou were killed\\b",
+      "\\b{player}\\b.{0,80}\\b(?:was slain|was killed|died|fell|burned|drowned|blew up)\\b",
+      "\\b(?:slain|killed) by\\b.{0,80}\\b{player}\\b"
+    ]
+  }
+}

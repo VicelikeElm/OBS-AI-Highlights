@@ -28,7 +28,7 @@ import urllib.request
 import webbrowser
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 try:
     import psutil
@@ -1051,8 +1051,8 @@ class MainApp:
         ttk.Label(
             parent,
             text=(
-                "Each Highlight Capture run is a session - browse detection stats to tune "
-                "presets against real data instead of guessing."
+                "Browse capture stats and game-event markers from OBS recordings. "
+                "Select a recording timeline to review or export its markers."
             ),
             wraplength=680,
         ).pack(anchor="w", pady=(0, 8))
@@ -1096,6 +1096,27 @@ class MainApp:
         ttk.Button(button_row, text="Delete", command=self._delete_selected_session).pack(
             side="left", padx=(6, 0)
         )
+        self.timeline_export_format_var = tk.StringVar(value="Text")
+        ttk.Label(button_row, text="Export as:").pack(side="left", padx=(12, 4))
+        self.timeline_export_format_combo = ttk.Combobox(
+            button_row,
+            textvariable=self.timeline_export_format_var,
+            values=(
+                "Text",
+                "Final Cut Pro XML",
+                "Premiere Pro XML",
+                "DaVinci Resolve EDL",
+                "CSV",
+            ),
+            state="readonly",
+            width=23,
+        )
+        self.timeline_export_format_combo.pack(side="left")
+        ttk.Button(
+            button_row,
+            text="Export...",
+            command=self._export_selected_timeline,
+        ).pack(side="left", padx=(6, 0))
 
         ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=(0, 8))
 
@@ -1131,14 +1152,20 @@ class MainApp:
             started = record.get("started_at", "")[:16].replace("T", " ")
             game_event_counts = record.get("game_event_counts", {})
             game_events = sum(game_event_counts.values())
-            if record.get("capture_mode") == "game_events":
+            if record.get("capture_mode") == "recording_timeline":
+                activity_count = len(record.get("timeline_markers", []))
+                saved_count = 0
+            elif record.get("capture_mode") == "game_events":
                 activity_count = game_events
+                saved_count = record.get("saved_count", 0)
             elif game_event_counts:
                 activity_count = (
                     f"{game_events} / {record.get('thoughts_analyzed', 0)}"
                 )
+                saved_count = record.get("saved_count", 0)
             else:
                 activity_count = record.get("thoughts_analyzed", 0)
+                saved_count = record.get("saved_count", 0)
             iid = self.sessions_tree.insert(
                 "",
                 "end",
@@ -1146,7 +1173,7 @@ class MainApp:
                     record.get("label", ""),
                     started,
                     activity_count,
-                    record.get("saved_count", 0),
+                    saved_count,
                 ),
             )
             self._session_id_by_iid[iid] = record["session_id"]
@@ -1175,6 +1202,40 @@ class MainApp:
     def _show_session_detail(self, record):
         lines = []
         lines.append(f"Session: {record.get('label', '')}")
+        if record.get("capture_mode") == "recording_timeline":
+            lines.append(f"Game: {record.get('game_name') or '(not detected)'}")
+            if record.get("game_profile"):
+                lines.append(f"Game profile: {record['game_profile']}")
+            lines.append(f"Recording: {record.get('recording_file') or '(path unavailable from OBS)'}")
+            lines.append(f"Started: {record.get('started_at', '')}")
+            lines.append(f"Ended: {record.get('ended_at') or '(still recording, or ended abnormally)'}")
+            if record.get("chapter_embedding") != "disabled":
+                lines.append(
+                    "Native OBS chapters: "
+                    f"{record.get('chapter_embedding', 'pending')} "
+                    f"({record.get('embedded_chapters_count', 0)} added)"
+                )
+                if record.get("chapter_embedding_error"):
+                    lines.append(
+                        f"Chapter note: {record['chapter_embedding_error']}"
+                    )
+            markers = record.get("timeline_markers", [])
+            lines.append("")
+            lines.append(f"Timeline markers ({len(markers)}):")
+            if markers:
+                lines.extend(
+                    f"  {marker.get('time', '')}  {marker.get('type', 'EVENT')}: "
+                    f"{marker.get('label', '')}"
+                    for marker in markers
+                )
+            else:
+                lines.append("  (none recorded)")
+            self.session_detail_text.configure(state="normal")
+            self.session_detail_text.delete("1.0", "end")
+            self.session_detail_text.insert("1.0", "\n".join(lines))
+            self.session_detail_text.configure(state="disabled")
+            return
+
         if record.get("capture_mode") == "game_events":
             event_counts = record.get("game_event_counts", {})
             lines.append(f"Game: {record.get('game_name', '(unknown)')}")
@@ -1256,6 +1317,66 @@ class MainApp:
         self.session_detail_text.delete("1.0", "end")
         self.session_detail_text.insert("1.0", "\n".join(lines))
         self.session_detail_text.configure(state="disabled")
+
+    def _export_selected_timeline(self):
+        session_id = self._selected_session_id()
+        if not session_id:
+            return
+        record = session_stats.get_session(session_id)
+        if not record or record.get("capture_mode") != "recording_timeline":
+            messagebox.showinfo(
+                "Export timeline",
+                "Select an OBS recording timeline session first.",
+                parent=self.root,
+            )
+            return
+        export_format = self.timeline_export_format_var.get()
+        extension, filetype_label = (
+            (".csv", "CSV files")
+            if export_format == "CSV"
+            else session_stats.TIMELINE_EXPORT_FORMATS.get(
+                export_format,
+                (".txt", "Text files", None),
+            )[:2]
+        )
+        destination = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export recording timeline",
+            defaultextension=extension,
+            filetypes=[
+                (filetype_label, f"*{extension}"),
+                ("All files", "*.*"),
+            ],
+            initialfile=f"{record.get('session_id', 'recording')}_timeline{extension}",
+        )
+        if not destination:
+            return
+        try:
+            exported = session_stats.export_timeline(
+                session_id,
+                destination,
+                export_format,
+            )
+        except OSError as error:
+            messagebox.showerror(
+                "Export timeline",
+                f"Could not export the timeline:\n{error}",
+                parent=self.root,
+            )
+            return
+        except ValueError as error:
+            messagebox.showerror(
+                "Export timeline",
+                str(error),
+                parent=self.root,
+            )
+            return
+        if not exported:
+            messagebox.showerror(
+                "Export timeline",
+                "The selected session is not a recording timeline.",
+                parent=self.root,
+            )
 
     def _clear_session_detail(self):
         self.session_detail_text.configure(state="normal")

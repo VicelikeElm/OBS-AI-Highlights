@@ -1,0 +1,18 @@
+{
+  "game_name": "Destiny 2",
+  "profile_name": "Destiny 2",
+  "process_names": [
+    "destiny2.exe"
+  ],
+  "ocr_region": {
+    "left": 0.66,
+    "top": 0.03,
+    "width": 0.33,
+    "height": 0.34
+  },
+  "event_patterns": {
+    "DEATH": [
+      "\\bguardian down\\b"
+    ]
+  }
+}

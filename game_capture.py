@@ -10,6 +10,8 @@ import obsws_python as obs
 
 import config as app_config
 import game_detector
+import game_timeline
+import remote_api
 from game_events import GameEventMonitor
 from round_tracker import RoundTracker
 import session_stats
@@ -147,12 +149,30 @@ def main():
     tracker = None
     active_game = None
     active_session_id = None
+    last_game_snapshot = None
+    recording_timeline = game_timeline.RecordingTimeline(
+        client,
+        embed_chapters=config.get("embed_recording_chapters", False),
+    )
+    remote_state = None
+    remote_server = None
+    if config.get("remote_api_enabled", True):
+        remote_state = remote_api.RemoteControlState()
+        remote_server = remote_api.start_server(
+            remote_state,
+            int(config.get("remote_api_port", 8756)),
+        )
+        if remote_server is None:
+            print("WARNING: Local control API could not bind; recording markers via Stream Deck are unavailable.")
+        else:
+            print(f"Local control API listening on http://127.0.0.1:{int(config.get('remote_api_port', 8756))}")
     pending_batches = []
     active_before_seconds = 20
     active_after_seconds = 5
     selected_event_types = set()
     next_game_check = 0.0
     next_obs_check = 0.0
+    next_record_check = 0.0
     next_ocr_poll = 0.0
     sequence = 1
 
@@ -170,6 +190,25 @@ def main():
                     print("Started OBS Replay Buffer.")
                 next_obs_check = now + 5.0
 
+            if now >= next_record_check:
+                record_status = client.get_record_status()
+                recording_timeline.update(
+                    {
+                        "recording": bool(getattr(record_status, "output_active", False)),
+                        "record_duration_seconds": (
+                            max(0.0, float(record_status.output_duration) / 1000.0)
+                            if getattr(record_status, "output_active", False)
+                            and getattr(record_status, "output_duration", None) is not None
+                            else 0.0
+                        ),
+                        "recording_file": str(getattr(record_status, "output_path", "") or ""),
+                    },
+                    active_game.get("game_name", "") if active_game else "",
+                    active_game.get("profile_name", "") if active_game else "",
+                    now,
+                )
+                next_record_check = now + 1.0
+
             if now >= next_game_check:
                 detected = game_detector.detect_running_game(
                     selected_game=selected_game if selected_game != "auto" else None,
@@ -184,6 +223,7 @@ def main():
                 if detected is None:
                     monitor = None
                     tracker = None
+                    last_game_snapshot = None
                     if active_session_id:
                         session_stats.end_session(active_session_id)
                         active_session_id = None
@@ -220,6 +260,7 @@ def main():
                         detected["game_name"],
                         detected["profile_name"],
                     )
+                    last_game_snapshot = None
                     region = {
                         "left": float(profile_settings["ocr_left"]),
                         "top": float(profile_settings["ocr_top"]),
@@ -253,7 +294,20 @@ def main():
                     snapshot = tracker.apply_event(event)
                     if snapshot is None:
                         continue
+                    last_game_snapshot = snapshot
                     session_stats.record_game_event(active_session_id, event, snapshot)
+                    recording_timeline.add_marker(
+                        event.get("type", "GAME_EVENT"),
+                        event.get("text", event.get("type", "Game event")),
+                        snapshot.get("game", ""),
+                        snapshot.get("profile", ""),
+                        event_timestamp=event.get("timestamp"),
+                    )
+                    if recording_timeline.last_chapter_error:
+                        print(
+                            "WARNING: Could not add native OBS chapter: "
+                            f"{recording_timeline.last_chapter_error}"
+                        )
                     if should_trigger_event_clip(event, selected_event_types):
                         event_time = time.monotonic()
                         batch = next(
@@ -282,6 +336,62 @@ def main():
                         )
                     print(f"Recognized {event['type']}: {event['text']}")
 
+            if remote_state is not None:
+                if recording_timeline.session_id:
+                    remote_state.update_status(
+                        capturing=True,
+                        recording=True,
+                        recording_session_id=recording_timeline.session_id,
+                        game=active_game.get("game_name", "") if active_game else "",
+                    )
+                else:
+                    remote_state.update_status(
+                        capturing=True,
+                        recording=False,
+                        recording_session_id=None,
+                        game=active_game.get("game_name", "") if active_game else "",
+                    )
+                for marker_label in remote_state.consume_timeline_markers():
+                    if recording_timeline.add_marker(
+                        "MANUAL",
+                        marker_label,
+                        active_game.get("game_name", "") if active_game else "",
+                        active_game.get("profile_name", "") if active_game else "",
+                    ):
+                        print(f"Recording marker added: {marker_label}")
+                        if recording_timeline.last_chapter_error:
+                            print(
+                                "WARNING: Could not add native OBS chapter: "
+                                f"{recording_timeline.last_chapter_error}"
+                            )
+                    else:
+                        print("Manual recording marker ignored; OBS is not recording.")
+                if remote_state.consume_manual_highlight_request():
+                    event_time = time.monotonic()
+                    snapshot = last_game_snapshot or {
+                        "game": active_game.get("game_name", "Unknown game") if active_game else "Unknown game",
+                        "profile": active_game.get("profile_name", "") if active_game else "",
+                        "round": 0,
+                        "score": 0,
+                        "events": [],
+                        "achievements": [],
+                    }
+                    pending_batches.append({
+                        "session_id": active_session_id,
+                        "events": [{
+                            "type": "MANUAL",
+                            "text": "Manual highlight via local API",
+                        }],
+                        "snapshot": snapshot,
+                        "before_seconds": active_before_seconds,
+                        "after_seconds": active_after_seconds,
+                        "save_at": clip_save_deadline(
+                            event_time,
+                            active_after_seconds,
+                        ),
+                    })
+                    print("Manual highlight requested; waiting for the post-event footage window.")
+
             ready_batch = next(
                 (
                     batch
@@ -304,7 +414,8 @@ def main():
                     context,
                     sequence,
                 )
-                session_stats.record_game_clip(ready_batch["session_id"], clip_path)
+                if ready_batch["session_id"]:
+                    session_stats.record_game_clip(ready_batch["session_id"], clip_path)
                 sequence += 1
                 print(f"Saved and tagged game clip: {clip_path}")
                 pending_batches.remove(ready_batch)
@@ -313,6 +424,10 @@ def main():
     except KeyboardInterrupt:
         print("Game-event capture stopped.")
     finally:
+        recording_timeline.close()
         if active_session_id:
             session_stats.end_session(active_session_id)
+        if remote_server is not None:
+            remote_server.shutdown()
+            remote_server.server_close()
         client.disconnect()
