@@ -95,9 +95,12 @@ Highlights** from the Start Menu. One window, five tabs:
   to become active. New installations get a short setup guide, and a
   **Review clips** shortcut appears when clips are available. Empty Clips
   and Sessions views explain what to do next. The Run tab also reports a
-  detected supported game and its profile, and lets you choose Auto-detect
-  or a supported game and enter your in-game name for kill/death matching.
-  These choices are saved and take effect on the next capture.
+  detected supported game and its profile. The game dropdown includes
+  Auto-detect, Rainbow Six Siege, Escape from Tarkov, and Custom. For a
+  custom game, enter its display name and Windows process name; enter your
+  in-game name to help match kills and deaths. These choices are saved and
+  take effect on the next capture. Custom profiles use the common basic HUD
+  event recognition; game-specific event patterns may still need tuning.
   The AI audio/transcript mode can still use the game events for extra context.
 - **Clips** — every detected clip in one list, across every pipeline
   stage, with its score, status, duration, and detection reasons/full

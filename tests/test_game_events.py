@@ -91,6 +91,28 @@ class GameEventTests(unittest.TestCase):
 
         self.assertEqual(detected["profile_name"], "Tarkov")
 
+    def test_custom_game_uses_saved_name_and_process_name(self):
+        detected = game_detector.detect_running_game(
+            [FakeProcess("MyGame-Win64-Shipping.exe")],
+            selected_game="custom",
+            custom_profile={
+                "game_name": "My Custom Game",
+                "process_name": "MyGame-Win64-Shipping.exe",
+            },
+        )
+
+        self.assertEqual(detected["game_name"], "My Custom Game")
+        self.assertEqual(detected["profile_name"], "Custom")
+
+    def test_custom_game_requires_name_and_process_name(self):
+        self.assertIsNone(
+            game_detector.detect_running_game(
+                [FakeProcess("MyGame.exe")],
+                selected_game="custom",
+                custom_profile={"game_name": "My Game", "process_name": ""},
+            )
+        )
+
     def test_event_clip_context_includes_tags_and_trigger_events(self):
         tracker = RoundTracker("Rainbow Six Siege", "Siege")
         event = {

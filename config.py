@@ -103,6 +103,8 @@ DEFAULTS = {
     "game_events_enabled": True,
     "capture_mode": "game_events",
     "game_selection": "auto",
+    "custom_game_name": "",
+    "custom_game_process_name": "",
     "game_player_name": "",
     "game_tesseract_cmd": "",
     "game_ocr_left": 0.70,

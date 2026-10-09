@@ -158,6 +158,10 @@ def main():
             if now >= next_game_check:
                 detected = game_detector.detect_running_game(
                     selected_game=selected_game if selected_game != "auto" else None,
+                    custom_profile={
+                        "game_name": config.get("custom_game_name", ""),
+                        "process_name": config.get("custom_game_process_name", ""),
+                    } if selected_game == "custom" else None,
                 )
                 if detected is None:
                     monitor = None

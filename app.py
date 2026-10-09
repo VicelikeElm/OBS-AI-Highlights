@@ -625,6 +625,8 @@ class MainApp:
             game_name = profile["game_name"]
             self._game_choice_to_value[game_name] = game_name
             self._game_value_to_choice[game_name] = game_name
+        self._game_choice_to_value["Custom..."] = "custom"
+        self._game_value_to_choice["custom"] = "Custom..."
 
         game_choice = self._game_value_to_choice.get(selected_game, "Auto-detect")
         self.game_selection_var = tk.StringVar(value=game_choice)
@@ -674,8 +676,55 @@ class MainApp:
         self.game_selection_combo.pack(side="left", padx=(8, 0))
         self.game_selection_combo.bind(
             "<<ComboboxSelected>>",
+            self._on_game_selection_changed,
+        )
+        self.custom_game_name_var = tk.StringVar(
+            value=str(settings.get("custom_game_name", ""))
+        )
+        self.custom_game_process_var = tk.StringVar(
+            value=str(settings.get("custom_game_process_name", ""))
+        )
+        self.custom_game_frame = ttk.Frame(game_frame)
+        ttk.Label(self.custom_game_frame, text="Custom game name:").pack(anchor="w")
+        self.custom_game_name_entry = ttk.Entry(
+            self.custom_game_frame,
+            textvariable=self.custom_game_name_var,
+        )
+        self.custom_game_name_entry.pack(fill="x", pady=(2, 6))
+        self.custom_game_name_entry.bind(
+            "<FocusOut>",
             lambda _event: self._save_run_game_settings(),
         )
+        self.custom_game_name_entry.bind(
+            "<Return>",
+            lambda _event: self._save_run_game_settings(),
+        )
+        ttk.Label(
+            self.custom_game_frame,
+            text="Game process name (usually ends in .exe):",
+        ).pack(anchor="w")
+        self.custom_game_process_entry = ttk.Entry(
+            self.custom_game_frame,
+            textvariable=self.custom_game_process_var,
+        )
+        self.custom_game_process_entry.pack(fill="x", pady=(2, 4))
+        self.custom_game_process_entry.bind(
+            "<FocusOut>",
+            lambda _event: self._save_run_game_settings(),
+        )
+        self.custom_game_process_entry.bind(
+            "<Return>",
+            lambda _event: self._save_run_game_settings(),
+        )
+        ttk.Label(
+            self.custom_game_frame,
+            text="Find the process name in Task Manager > Details. Custom games use "
+            "the same basic on-screen event recognition.",
+            wraplength=680,
+            foreground="#888888",
+        ).pack(anchor="w")
+        if selected_game.casefold() == "custom":
+            self.custom_game_frame.pack(fill="x", pady=(8, 0))
         ttk.Label(
             game_frame,
             text="Choose Auto-detect if you are not sure which game to select.",
@@ -717,6 +766,13 @@ class MainApp:
             return "Start Game Highlights"
         return "Start AI Highlights"
 
+    def _on_game_selection_changed(self, _event=None):
+        if self._game_choice_to_value.get(self.game_selection_var.get()) == "custom":
+            self.custom_game_frame.pack(fill="x", pady=(8, 0))
+        else:
+            self.custom_game_frame.pack_forget()
+        self._save_run_game_settings()
+
     def _save_run_game_settings(self):
         selected_game = self._game_choice_to_value.get(
             self.game_selection_var.get(),
@@ -724,6 +780,8 @@ class MainApp:
         )
         config = app_config.load_config()
         config["game_selection"] = selected_game
+        config["custom_game_name"] = self.custom_game_name_var.get().strip()
+        config["custom_game_process_name"] = self.custom_game_process_var.get().strip()
         config["capture_mode"] = self._capture_label_to_mode.get(
             self.capture_mode_var.get(),
             "game_events",
@@ -857,13 +915,26 @@ class MainApp:
         try:
             config = app_config.load_config()
             selected_game = config.get("game_selection", "auto")
+            custom_profile = {
+                "game_name": config.get("custom_game_name", ""),
+                "process_name": config.get("custom_game_process_name", ""),
+            }
             game = game_detector.detect_running_game(
                 selected_game=selected_game if selected_game != "auto" else None,
+                custom_profile=custom_profile if selected_game == "custom" else None,
             )
             text = (
                 game_detector.format_game_detection(game)
                 if game is not None or selected_game == "auto"
-                else f"{selected_game} is not running yet."
+                else (
+                    "Enter a custom game name and process name above."
+                    if selected_game == "custom"
+                    and not (
+                        custom_profile["game_name"].strip()
+                        and custom_profile["process_name"].strip()
+                    )
+                    else f"{custom_profile['game_name'] or selected_game} is not running yet."
+                )
             )
         except Exception as error:
             text = f"Game detection unavailable: {error}"

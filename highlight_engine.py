@@ -1847,6 +1847,10 @@ def run_live_sermon(
         selected_game = CONFIG.get("game_selection", "auto")
         detected = game_detector.detect_running_game(
             selected_game=selected_game if selected_game != "auto" else None,
+            custom_profile={
+                "game_name": CONFIG.get("custom_game_name", ""),
+                "process_name": CONFIG.get("custom_game_process_name", ""),
+            } if selected_game == "custom" else None,
         )
         if detected is None:
             return

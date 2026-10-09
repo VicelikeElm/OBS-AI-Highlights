@@ -55,10 +55,28 @@ def load_game_profiles(profile_dir=None):
     return profiles
 
 
-def detect_running_game(process_iter=None, profile_dir=None, selected_game=None):
+def detect_running_game(
+    process_iter=None,
+    profile_dir=None,
+    selected_game=None,
+    custom_profile=None,
+):
     """Return the matching game/profile and process name, or None if unsupported."""
     profiles = load_game_profiles(profile_dir)
-    if selected_game and selected_game.casefold() != "auto":
+    if selected_game and selected_game.casefold() == "custom":
+        game_name = str((custom_profile or {}).get("game_name", "")).strip()
+        process_name = str((custom_profile or {}).get("process_name", "")).strip()
+        profiles = (
+            [{
+                "game_name": game_name,
+                "profile_name": "Custom",
+                "process_names": [process_name],
+                "event_patterns": {},
+            }]
+            if game_name and process_name
+            else []
+        )
+    elif selected_game and selected_game.casefold() != "auto":
         profiles = [
             profile
             for profile in profiles
