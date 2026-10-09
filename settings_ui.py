@@ -371,8 +371,19 @@ class SettingsUI:
         outer = ttk.Frame(self.parent, padding=16)
         outer.pack(fill="both", expand=True)
 
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+
+        button_row = ttk.Frame(outer, padding=(0, 12, 0, 0))
+        button_row.grid(row=1, column=0, sticky="ew")
+        ttk.Button(
+            button_row,
+            text="Save Settings",
+            command=self._save,
+        ).pack(side="right")
+
         notebook = ttk.Notebook(outer)
-        notebook.pack(fill="both", expand=True)
+        notebook.grid(row=0, column=0, sticky="nsew")
 
         preset_tab = ttk.Frame(notebook, padding=12)
         connection_tab = ttk.Frame(notebook, padding=12)
@@ -391,15 +402,6 @@ class SettingsUI:
         self._build_caption_style_tab(caption_tab)
         self._build_advanced_tab(advanced_tab)
         self._build_about_tab(about_tab)
-
-        button_row = ttk.Frame(outer, padding=(0, 12, 0, 0))
-        button_row.pack(fill="x")
-
-        ttk.Button(
-            button_row,
-            text="Save Settings",
-            command=self._save,
-        ).pack(side="right")
 
     def _make_scrollable(self, parent):
         """Wraps a tab's content in a vertically scrollable area and

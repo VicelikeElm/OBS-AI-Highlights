@@ -8,7 +8,10 @@
 
 Built by [Vice Media Solutions](assets/vivce_media_solutions.png).
 
-## What's new in v1.1.0
+## What's new in v1.1.1
+
+- Keep **Save Settings** visible in a fixed footer while scrolling through
+  Settings, so it doesn't get hidden below long settings tabs.
 
 - Add Minecraft Java, Minecraft Bedrock, and Destiny 2 profiles alongside
   configurable per-game profiles and event controls.
