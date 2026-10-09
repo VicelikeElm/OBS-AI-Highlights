@@ -51,6 +51,16 @@ FFMPEG_DOWNLOAD_URL = (
 VENDOR_FFMPEG_DIR = SOURCE_ROOT / "vendor" / "ffmpeg"
 BUNDLED_FFMPEG_EXE = VENDOR_FFMPEG_DIR / "ffmpeg.exe"
 
+TESSERACT_VERSION = "5.4.0.20240606"
+TESSERACT_ASSET_NAME = f"tesseract-ocr-w64-setup-{TESSERACT_VERSION}.exe"
+TESSERACT_SHA256 = "C885FFF6998E0608BA4BB8AB51436E1C6775C2BAFC2559A19B423E18678B60C9"
+TESSERACT_DOWNLOAD_URL = (
+    "https://github.com/UB-Mannheim/tesseract/releases/download/"
+    f"v{TESSERACT_VERSION}/{TESSERACT_ASSET_NAME}"
+)
+VENDOR_TESSERACT_DIR = SOURCE_ROOT / "vendor" / "tesseract"
+BUNDLED_TESSERACT_INSTALLER = VENDOR_TESSERACT_DIR / TESSERACT_ASSET_NAME
+
 
 def _ensure_bundled_ffmpeg():
     """Downloads and caches the pinned ffmpeg build (see above) so the
@@ -98,6 +108,36 @@ def _ensure_bundled_ffmpeg():
                 shutil.copyfileobj(source, dest)
 
     print(f"ffmpeg cached at: {BUNDLED_FFMPEG_EXE}")
+
+
+def _ensure_bundled_tesseract():
+    """Download and verify the official Windows Tesseract installer."""
+    if BUNDLED_TESSERACT_INSTALLER.exists():
+        digest = hashlib.sha256(BUNDLED_TESSERACT_INSTALLER.read_bytes()).hexdigest()
+        if digest == TESSERACT_SHA256.lower():
+            print(f"Using verified Tesseract installer: {BUNDLED_TESSERACT_INSTALLER}")
+            return
+        raise RuntimeError(
+            "Cached Tesseract installer SHA-256 mismatch: expected "
+            f"{TESSERACT_SHA256}, got {digest}"
+        )
+
+    print()
+    print(f"Downloading Tesseract OCR ({TESSERACT_ASSET_NAME})")
+    VENDOR_TESSERACT_DIR.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        installer_path = Path(temp_dir) / TESSERACT_ASSET_NAME
+        urllib.request.urlretrieve(TESSERACT_DOWNLOAD_URL, installer_path)
+        digest = hashlib.sha256(installer_path.read_bytes()).hexdigest()
+        if digest != TESSERACT_SHA256.lower():
+            raise RuntimeError(
+                "Downloaded Tesseract installer SHA-256 mismatch: expected "
+                f"{TESSERACT_SHA256}, got {digest}"
+            )
+        shutil.copy2(installer_path, BUNDLED_TESSERACT_INSTALLER)
+
+    print(f"Verified Tesseract installer cached at: {BUNDLED_TESSERACT_INSTALLER}")
 
 
 def _run(command):
@@ -259,7 +299,7 @@ def _build_installer_if_available(app_only_update=False):
             )
 
         print()
-        print("App-only update built (use only when bundled dependencies are unchanged):")
+        print("App-only update built (installs Tesseract OCR if it is not present):")
         print(" -", update_installer)
 
     return installer
@@ -271,8 +311,8 @@ def main():
         "--app-only-update",
         action="store_true",
         help=(
-            "Also build a small update package that replaces only the app executable "
-            "and app assets, leaving bundled runtime dependencies unchanged."
+            "Also build a smaller update package that replaces app files and installs "
+            "Tesseract OCR if it is not already present."
         ),
     )
     args = parser.parse_args()
@@ -287,6 +327,7 @@ def main():
     print("=" * 70)
 
     _ensure_bundled_ffmpeg()
+    _ensure_bundled_tesseract()
     _run(_pyinstaller_command())
     _verify_outputs()
     _build_installer_if_available(app_only_update=args.app_only_update)

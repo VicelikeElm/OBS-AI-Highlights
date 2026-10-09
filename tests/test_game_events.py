@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import game_events
 import game_detector
 import game_capture
 from game_capture import build_clip_context
@@ -56,6 +57,58 @@ class GameEventTests(unittest.TestCase):
 
         self.assertEqual(len(monitor.poll_events()), 1)
         self.assertEqual(monitor.poll_events(), [])
+
+    def test_monitor_prefers_bundled_tesseract_when_no_override_is_set(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tesseract_dir = Path(temp_dir)
+            executable = tesseract_dir / "tesseract.exe"
+            executable.touch()
+            tessdata = tesseract_dir / "tessdata"
+            tessdata.mkdir()
+            with patch.object(
+                game_events.app_config,
+                "bundled_tesseract_path",
+                return_value=executable,
+            ):
+                command, data_dir = game_events._resolve_tesseract_runtime("")
+
+        self.assertEqual(command, str(executable))
+        self.assertEqual(data_dir, tessdata)
+
+    def test_configured_tesseract_path_overrides_bundled_runtime(self):
+        with patch.object(
+            game_events.app_config,
+            "bundled_tesseract_path",
+            side_effect=AssertionError("configured path should take priority"),
+        ):
+            command, data_dir = game_events._resolve_tesseract_runtime(
+                r"C:\Custom\Tesseract\tesseract.exe"
+            )
+
+        self.assertEqual(command, r"C:\Custom\Tesseract\tesseract.exe")
+        self.assertIsNone(data_dir)
+
+    def test_bundled_tesseract_requires_english_language_data(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            executable = root / "tesseract" / "tesseract.exe"
+            executable.parent.mkdir()
+            executable.touch()
+            with patch.object(
+                game_events.app_config,
+                "resource_path",
+                side_effect=lambda *parts: root.joinpath(*parts),
+            ):
+                self.assertIsNone(game_events.app_config.bundled_tesseract_path())
+
+                english_data = executable.parent / "tessdata" / "eng.traineddata"
+                english_data.parent.mkdir()
+                english_data.touch()
+
+                self.assertEqual(
+                    game_events.app_config.bundled_tesseract_path(),
+                    executable,
+                )
 
     def test_siege_process_detection_and_unknown_process(self):
         self.assertEqual(

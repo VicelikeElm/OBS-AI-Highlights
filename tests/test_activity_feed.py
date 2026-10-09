@@ -69,13 +69,29 @@ class CaptureModeTests(unittest.TestCase):
 
 class CapturePrerequisiteTests(unittest.TestCase):
     @patch("app.shutil.which", return_value=None)
+    @patch("app.app_config.bundled_tesseract_path")
+    def test_bundled_tesseract_satisfies_game_capture(
+        self,
+        bundled_tesseract_path,
+        _which,
+    ):
+        bundled_tesseract_path.return_value = Path("tesseract.exe")
+
+        self.assertIsNone(
+            _capture_prerequisite_error(
+                "capture",
+                {"capture_mode": "game_events", "game_events_enabled": True},
+            )
+        )
+
+    @patch("app.shutil.which", return_value=None)
     def test_game_capture_requires_tesseract(self, _which):
         error = _capture_prerequisite_error(
             "capture",
             {"capture_mode": "game_events", "game_events_enabled": True},
         )
 
-        self.assertIn("needs Tesseract OCR", error)
+        self.assertIn("bundled Tesseract OCR", error)
         self.assertIn("AI Highlights can still run", error)
 
     @patch("app.shutil.which", return_value=None)

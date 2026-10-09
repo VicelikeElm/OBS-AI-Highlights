@@ -679,14 +679,44 @@ class SettingsUI:
         ).pack(fill="x", pady=(0, 8))
         self._add_labeled_entry(
             parent,
-            "Your in-game name (also available on the Run tab)",
+            "In-game player name",
             self.game_player_name_var,
+            label_width=28,
         )
-        self._add_labeled_entry(
+        ttk.Label(
             parent,
-            "Tesseract program location (optional; usually leave blank)",
-            self.game_tesseract_cmd_var,
-        )
+            text="Enter your name exactly as it appears in the game's kill feed.",
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 6))
+
+        tesseract_row = ttk.Frame(parent)
+        tesseract_row.pack(fill="x", pady=4)
+        ttk.Label(
+            tesseract_row,
+            text="Tesseract path (optional)",
+            width=28,
+            anchor="w",
+        ).pack(side="left")
+        ttk.Entry(
+            tesseract_row,
+            textvariable=self.game_tesseract_cmd_var,
+        ).pack(side="left", fill="x", expand=True)
+        ttk.Button(
+            tesseract_row,
+            text="Browse...",
+            command=self._browse_tesseract_path,
+        ).pack(side="left", padx=(6, 0))
+        ttk.Label(
+            parent,
+            text=(
+                "The installer includes Tesseract and English OCR data. Leave this blank "
+                "to use them, or browse to another tesseract.exe."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(0, 2))
+        ttk.Frame(parent, height=6).pack()
         ttk.Label(parent, text="Screen area to check (advanced)").pack(
             fill="x",
             pady=(8, 0),
@@ -705,6 +735,21 @@ class SettingsUI:
             wraplength=680,
             foreground="#888888",
         ).pack(fill="x", pady=(8, 0))
+
+    def _browse_tesseract_path(self):
+        common_location = Path(r"C:\Program Files\Tesseract-OCR")
+        initial_dir = (
+            common_location
+            if common_location.is_dir()
+            else Path(r"C:\Program Files")
+        )
+        selected_path = filedialog.askopenfilename(
+            title="Select tesseract.exe",
+            initialdir=str(initial_dir),
+            filetypes=[("Tesseract executable", "tesseract.exe"), ("Applications", "*.exe")],
+        )
+        if selected_path:
+            self.game_tesseract_cmd_var.set(selected_path)
 
     def _show_model_info(self):
         messagebox.showinfo(

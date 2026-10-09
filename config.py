@@ -54,6 +54,14 @@ def resource_path(*parts):
 
     return base.joinpath(*parts)
 
+
+def bundled_tesseract_path():
+    """Return the app-local Tesseract executable when installed with the app."""
+    executable = resource_path("tesseract", "tesseract.exe")
+    english_data = executable.parent / "tessdata" / "eng.traineddata"
+    return executable if executable.is_file() and english_data.is_file() else None
+
+
 try:
     from dotenv import load_dotenv
     load_dotenv(ENV_FILE)

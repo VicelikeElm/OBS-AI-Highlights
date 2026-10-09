@@ -228,16 +228,22 @@ def _check_tesseract_preflight(config):
         return "optional", "Game-event detection is turned off."
 
     configured_command = str(config.get("game_tesseract_cmd", "")).strip()
-    available = (
-        Path(configured_command).is_file() or shutil.which(configured_command) is not None
-        if configured_command
-        else shutil.which("tesseract") is not None
-    )
+    if configured_command:
+        available = (
+            Path(configured_command).is_file()
+            or shutil.which(configured_command) is not None
+        )
+    else:
+        available = (
+            app_config.bundled_tesseract_path() is not None
+            or shutil.which("tesseract") is not None
+        )
     if available:
         return "ready", "Tesseract is available for game-event OCR."
     return (
         "optional",
-        "Game-event OCR needs Tesseract. Install it or set its path in Settings; "
+        "The bundled Tesseract OCR runtime is unavailable. Repair the app installation "
+        "or choose another Tesseract path in Settings; "
         "audio-based highlights can still work.",
     )
 
@@ -251,9 +257,9 @@ def _capture_prerequisite_error(role, config):
     level, message = _check_tesseract_preflight(config)
     if level != "ready":
         return (
-            "Game Highlights needs Tesseract OCR, but it isn't available. Install "
-            "Tesseract for Windows or set its executable path in Settings > Advanced > "
-            "Game Events. AI Highlights can still run without Tesseract."
+            "Game Highlights couldn't find its bundled Tesseract OCR runtime. Repair "
+            "the app installation or set another Tesseract executable path in "
+            "Settings > Advanced > Game Events. AI Highlights can still run without OCR."
         )
     return None
 

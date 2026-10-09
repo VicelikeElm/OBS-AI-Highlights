@@ -1,5 +1,7 @@
 # OBS AI Highlights
 
+> **Alpha testing:** This app is still in alpha. Expect bugs, incomplete features, and changes as it is tested and improved.
+
 [![Latest release](https://img.shields.io/github/v/release/VicelikeElm/OBS-AI-Highlights?label=latest%20release)](https://github.com/VicelikeElm/OBS-AI-Highlights/releases/latest)
 
 **[Download the latest Windows installer](https://github.com/VicelikeElm/OBS-AI-Highlights/releases/latest)** - grab the `.exe` from the Assets section of the latest release.
@@ -162,13 +164,14 @@ Settings live in `%APPDATA%\OBS AI Highlights\` (`highlight_config.json` +
 `.env` for the OBS password) - separate from wherever the app itself is
 installed, so it works without admin rights and survives a reinstall.
 
-Game-event OCR also requires the Tesseract OCR application. Install
-Tesseract for Windows, then leave its executable on `PATH` or set its
-path in Settings → Advanced → Game Events. Choose the game and enter your
-in-game player name on the Run tab. Configure the OCR region as normalized
-left/top/width/height values against the primary display if the event feed is
-not recognized. Game events mode requires Tesseract; AI audio/transcript mode
-does not.
+The Windows installer includes Tesseract OCR and English language data, so
+Game Highlights does not require a separate OCR download or system-wide
+installation. The optional
+Tesseract path in Settings → Advanced → Game Events can point to a different
+installation; leave it blank to use the bundled copy. Choose the game and
+enter your in-game player name on the Run tab. Configure the OCR region as
+normalized left/top/width/height values against the primary display if the
+event feed is not recognized. AI audio/transcript mode does not use OCR.
 
 ## Running from source
 
@@ -236,20 +239,25 @@ python build_app_windows.py --app-only-update
 This produces both the normal full installer and
 `installer-output/OBSAIHighlights-Update-vX.Y.Z.exe`. Attach both to the
 GitHub Release to let existing installs take the smaller update while
-new installs use the full installer. The app-only package replaces the
-executable and app assets, retaining FFmpeg and bundled libraries already
-installed. Do not publish that package when runtime dependencies change;
-publish only the full installer so the updater automatically falls back
-to it.
+new installs use the full installer. The update package replaces the
+executable and app assets and installs the bundled Tesseract OCR runtime
+when it is not already present; it retains FFmpeg and the other bundled
+libraries. Changes to PyInstaller-bundled Python/native libraries still
+require the full installer.
 
-The first run also downloads and caches a static ffmpeg build (~160MB,
-see below) under `vendor/ffmpeg/` - not committed to git, same as
-PyInstaller's own build tooling. Produces `dist/OBSAIHighlights/` (the
-packaged app) and `installer-output/OBSAIHighlights-Setup-vX.Y.Z.exe`.
+The build downloads and caches a static ffmpeg build (~160MB, see below)
+under `vendor/ffmpeg/` and the pinned Tesseract Windows installer under
+`vendor/tesseract/`. These build artifacts are not committed to git.
+Produces `dist/OBSAIHighlights/` (the packaged app) and
+`installer-output/OBSAIHighlights-Setup-vX.Y.Z.exe`.
 
 ## Third-party licenses
 
-The installer bundles an LGPL-only static build of
+The installer includes Tesseract OCR from
+[UB Mannheim's Windows distribution](https://github.com/UB-Mannheim/tesseract),
+installed privately in the app folder from its upstream Windows installer.
+Tesseract is licensed under [Apache 2.0](https://github.com/tesseract-ocr/tesseract/blob/main/LICENSE).
+The installer also bundles an LGPL-only static build of
 [ffmpeg](https://ffmpeg.org/) from
 [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) - GPL-licensed
 components (libx264, libx265, ...) are compiled out; NVENC hardware

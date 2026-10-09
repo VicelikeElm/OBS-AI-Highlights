@@ -7,6 +7,8 @@ import threading
 import time
 from datetime import datetime
 
+import config as app_config
+
 
 DEFAULT_OCR_REGION = {
     "left": 0.70,
@@ -32,6 +34,18 @@ DEFAULT_EVENT_PATTERNS = {
     "MATCH_POINT": [r"\bmatch point\b"],
     "OVERTIME": [r"\bovertime\b"],
 }
+
+
+def _resolve_tesseract_runtime(configured_path):
+    if configured_path.strip():
+        return configured_path.strip(), None
+
+    executable = app_config.bundled_tesseract_path()
+    if executable is None:
+        return "", None
+
+    tessdata = executable.parent / "tessdata"
+    return str(executable), tessdata if tessdata.is_dir() else None
 
 
 def _event_patterns(profile):
@@ -153,8 +167,9 @@ class GameEventMonitor:
                 "application dependencies and Tesseract OCR."
             ) from error
 
-        if self.tesseract_cmd:
-            pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
+        tesseract_cmd, tessdata_dir = _resolve_tesseract_runtime(self.tesseract_cmd)
+        if tesseract_cmd:
+            pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
         with mss.mss() as capture:
             if len(capture.monitors) < 2:
@@ -172,7 +187,10 @@ class GameEventMonitor:
             }
             screenshot = capture.grab(box)
             image = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
-            return pytesseract.image_to_string(image, config="--psm 6")
+            ocr_config = "--psm 6"
+            if tessdata_dir is not None:
+                ocr_config = f'--tessdata-dir "{tessdata_dir}" {ocr_config}'
+            return pytesseract.image_to_string(image, config=ocr_config)
 
     def poll_events(self):
         text = self.capture_text()
