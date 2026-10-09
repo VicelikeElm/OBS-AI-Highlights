@@ -74,29 +74,31 @@ Each stage can run on its own, or all three from one app - see below.
 Run the installer (`OBSAIHighlights-Setup-vX.Y.Z.exe`) and launch **OBS AI
 Highlights** from the Start Menu. One window, five tabs:
 
-- **Run** — a quick-start checklist reminds you to start OBS Replay
-  Buffer, recording, or streaming, choose a preset if needed, then start
-  capture. Plain-language status messages explain what the app is doing
+- **Run** — choose lightweight Game events or the existing AI audio/transcript
+  capture. Game events mode avoids loading Whisper or capturing audio; it
+  watches the selected game's on-screen feed and saves/tag OBS Replay Buffer
+  clips when events are recognized. It is designed for low resource use, but
+  screen OCR can miss or misread text and needs Tesseract installed.
+  Rainbow Six Siege has event patterns. Tarkov process detection is included,
+  but its OCR event patterns still need in-game verification before automatic
+  Tarkov event clips can be relied on.
+  A quick-start checklist explains OBS Replay Buffer and the game/name
+  settings. Plain-language status messages explain what the app is doing
   and where to go next.
   Automatic clip preparation and rendering can be enabled here; manual
   actions remain available. A short, friendly activity feed shows
   important progress and warnings, while full technical details stay
   hidden until requested. Use **Check setup** to expand a checklist for the
-  OBS connection, selected audio device, and recording/output folders before
-  capture. Missing Tesseract is listed as optional for game-event OCR.
+  OBS connection, the needed audio/OCR setup for the selected mode, and
+  recording/output folders before capture.
   The check is advisory and doesn't prevent capture from waiting for OBS
   to become active. New installations get a short setup guide, and a
   **Review clips** shortcut appears when clips are available. Empty Clips
   and Sessions views explain what to do next. The Run tab also reports a
-  detected supported game
-  and its profile; the Run tab also lets you choose Auto-detect or a
-  supported game and enter your in-game name for kill/death matching.
+  detected supported game and its profile, and lets you choose Auto-detect
+  or a supported game and enter your in-game name for kill/death matching.
   These choices are saved and take effect on the next capture.
-  Rainbow Six Siege detection is included as the first game profile.
-  During capture, the optional game-event engine OCRs a
-  configurable primary-display region, scores recognized events and
-  achievements alongside transcript/audio scores, and stores that context
-  with saved clips.
+  The AI audio/transcript mode can still use the game events for extra context.
 - **Clips** — every detected clip in one list, across every pipeline
   stage, with its score, status, duration, and detection reasons/full
   transcript. Play a clip in your default video player, Approve or
@@ -157,10 +159,11 @@ installed, so it works without admin rights and survives a reinstall.
 
 Game-event OCR also requires the Tesseract OCR application. Install
 Tesseract for Windows, then leave its executable on `PATH` or set its
-path in Settings → Advanced → Game Events. Configure the OCR region as normalized
-left/top/width/height values against the primary display, and enter your
-in-game player name for kill/death attribution. If Tesseract is unavailable,
-normal transcript/audio capture continues and the error is logged.
+path in Settings → Advanced → Game Events. Choose the game and enter your
+in-game player name on the Run tab. Configure the OCR region as normalized
+left/top/width/height values against the primary display if the event feed is
+not recognized. Game events mode requires Tesseract; AI audio/transcript mode
+does not.
 
 ## Running from source
 

@@ -1,0 +1,8 @@
+{
+  "game_name": "Escape from Tarkov",
+  "profile_name": "Tarkov",
+  "process_names": [
+    "EscapeFromTarkov.exe"
+  ],
+  "event_patterns": {}
+}

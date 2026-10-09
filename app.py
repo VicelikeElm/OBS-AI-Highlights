@@ -244,6 +244,7 @@ def _check_tesseract_preflight(config):
 
 def _check_obs_preflight(config=None):
     config = config or app_config.load_config()
+    game_capture_mode = config.get("capture_mode", "game_events") == "game_events"
     host = str(config.get("obs_host", "127.0.0.1"))
     port = config.get("obs_port", 4455)
     client = None
@@ -286,8 +287,25 @@ def _check_obs_preflight(config=None):
         output_check = _check_folder_preflight("Output folder", output_folder, allow_create=True)
     except (OSError, TypeError, ValueError) as error:
         output_check = ("warning", f"Couldn't check clip output folder: {error}")
-    audio_level, audio_message = _check_audio_preflight(config)
+    if game_capture_mode:
+        audio_level, audio_message = (
+            "optional",
+            "Not needed in Game events mode. Choose AI audio and transcript mode to use audio.",
+        )
+    else:
+        audio_level, audio_message = _check_audio_preflight(config)
+
     tesseract_level, tesseract_message = _check_tesseract_preflight(config)
+    if game_capture_mode:
+        if not config.get("game_events_enabled", True):
+            tesseract_level = "warning"
+            tesseract_message = "Enable game-event OCR in Settings to capture game highlights."
+        elif tesseract_level == "optional":
+            tesseract_level = "warning"
+            tesseract_message = (
+                "Game events mode needs Tesseract OCR. Install it or set its path in "
+                "Settings > Advanced > Game Events."
+            )
 
     return [
         ("obs", "OBS connection", *obs_check[1:]),
@@ -346,6 +364,10 @@ def _download_installer(asset_url, expected_size, progress_callback):
 
 def run_worker(role):
     if role == "capture":
+        if app_config.load_config().get("capture_mode") == "game_events":
+            import game_capture
+            game_capture.main()
+            return
         import highlight_engine
         highlight_engine.main()
     elif role == "verify":
@@ -424,7 +446,7 @@ class MainApp:
     def _build_run_tab(self, parent):
         ttk.Label(
             parent,
-            text="Capture the good moments. OBS AI Highlights will save clips for you to review.",
+            text="Save and tag game moments with OBS, or use AI audio highlights if you prefer.",
             wraplength=700,
         ).pack(anchor="w", pady=(0, 12))
 
@@ -433,9 +455,9 @@ class MainApp:
         ttk.Label(
             quick_start,
             text=(
-                "1. Open OBS and start Replay Buffer, recording, or streaming.\n"
-                "2. Choose your content preset in Settings if needed.\n"
-                "3. Start capture below, then do your thing."
+                "1. Open OBS and enable its Replay Buffer.\n"
+                "2. Choose a game and enter your in-game name above.\n"
+                "3. Start capture below. AI audio capture is optional."
             ),
             justify="left",
         ).pack(anchor="w")
@@ -452,6 +474,9 @@ class MainApp:
             padding=(12, 8),
         )
         self.capture_button.pack(side="left")
+        self.capture_button.configure(
+            text=self._capture_button_text(self._capture_mode),
+        )
 
         self.stop_button = ttk.Button(
             action_row,
@@ -476,7 +501,7 @@ class MainApp:
 
         self.status_label = ttk.Label(
             parent,
-            text="Ready. Start OBS Replay Buffer, recording, or streaming, then begin capture.",
+            text="Ready. Open OBS and enable Replay Buffer, then start capture.",
             font=("TkDefaultFont", 10, "bold"),
         )
         self.status_label.pack(fill="x", pady=(0, 4))
@@ -500,10 +525,10 @@ class MainApp:
         self.preflight_frame = ttk.LabelFrame(parent, text="Setup checklist", padding=8)
         self.preflight_titles = {
             "obs": "OBS connection",
-            "audio": "Audio input",
+            "audio": "Audio input (AI mode)",
             "recording": "OBS recording folder",
             "output": "Clip output folder",
-            "ocr": "Game-event OCR (optional)",
+            "ocr": "Game-event OCR",
         }
         self.preflight_rows = {}
         for key, title in self.preflight_titles.items():
@@ -603,10 +628,38 @@ class MainApp:
 
         game_choice = self._game_value_to_choice.get(selected_game, "Auto-detect")
         self.game_selection_var = tk.StringVar(value=game_choice)
+        capture_mode = str(settings.get("capture_mode", "game_events"))
+        self._capture_mode_to_label = {
+            "game_events": "Game events (low resource)",
+            "ai": "AI audio and transcript (more resource use)",
+        }
+        self._capture_label_to_mode = {
+            label: mode for mode, label in self._capture_mode_to_label.items()
+        }
+        self.capture_mode_var = tk.StringVar(
+            value=self._capture_mode_to_label.get(capture_mode, self._capture_mode_to_label["game_events"])
+        )
+        self._capture_mode = capture_mode if capture_mode in self._capture_mode_to_label else "game_events"
         self.game_player_name_var = self.settings_ui.game_player_name_var
 
         game_frame = ttk.LabelFrame(parent, text="Game highlights (optional)", padding=8)
         game_frame.pack(fill="x", pady=(0, 8))
+
+        mode_row = ttk.Frame(game_frame)
+        mode_row.pack(fill="x", pady=(0, 8))
+        ttk.Label(mode_row, text="Capture mode:").pack(side="left")
+        self.capture_mode_combo = ttk.Combobox(
+            mode_row,
+            textvariable=self.capture_mode_var,
+            values=tuple(self._capture_label_to_mode),
+            state="readonly",
+            width=40,
+        )
+        self.capture_mode_combo.pack(side="left", padx=(8, 0))
+        self.capture_mode_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._save_run_game_settings(),
+        )
 
         game_row = ttk.Frame(game_frame)
         game_row.pack(fill="x")
@@ -658,6 +711,12 @@ class MainApp:
         )
         self.game_status_label.pack(anchor="w", pady=(6, 0))
 
+    @staticmethod
+    def _capture_button_text(capture_mode):
+        if capture_mode == "game_events":
+            return "Start Game Highlights"
+        return "Start AI Highlights"
+
     def _save_run_game_settings(self):
         selected_game = self._game_choice_to_value.get(
             self.game_selection_var.get(),
@@ -665,9 +724,17 @@ class MainApp:
         )
         config = app_config.load_config()
         config["game_selection"] = selected_game
+        config["capture_mode"] = self._capture_label_to_mode.get(
+            self.capture_mode_var.get(),
+            "game_events",
+        )
+        self._capture_mode = config["capture_mode"]
         config["game_player_name"] = self.game_player_name_var.get().strip()
         app_config.save_config(config)
         self.game_player_name_var.set(config["game_player_name"])
+        self.capture_button.configure(
+            text=self._capture_button_text(config["capture_mode"]),
+        )
         self._refresh_game_detection()
 
     def _show_first_run_guide(self):
@@ -687,8 +754,9 @@ class MainApp:
             body,
             text=(
                 "1. Open OBS and enable its WebSocket server in Tools > WebSocket Server Settings.\n"
-                "2. In Settings, choose an audio source/device and check your recording and output folders.\n"
-                "3. Return to Run, select Check setup, then start capturing highlights."
+                "2. Choose a game and enter your in-game name on the Run tab. Configure audio "
+                "only if you choose AI audio capture.\n"
+                "3. Check setup, then start capturing highlights."
             ),
             justify="left",
             wraplength=520,
@@ -1307,6 +1375,8 @@ class MainApp:
             lines.append(f"Game: {game_context.get('game', '(unknown)')}")
             lines.append(f"Game profile: {game_context.get('profile', '(unknown)')}")
             lines.append(f"Game score: {game_context.get('score', 0)}")
+            tags = game_context.get("tags", [])
+            lines.append(f"Tags: {', '.join(tags) if tags else '(none recorded)'}")
             lines.append("Achievements:")
             achievements = game_context.get("achievements", [])
             if achievements:

@@ -5,11 +5,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app import (
+    MainApp,
     _audio_device_for_preflight,
     _check_folder_preflight,
     _check_obs_preflight,
     _friendly_activity_message,
     _summarize_obs_status,
+    run_worker,
 )
 
 
@@ -49,6 +51,19 @@ class FriendlyActivityMessageTests(unittest.TestCase):
     def test_ignores_blank_and_unrecognized_technical_output(self):
         self.assertIsNone(_friendly_activity_message("\n"))
         self.assertIsNone(_friendly_activity_message("Whisper segment probability: 0.42\n"))
+
+
+class CaptureModeTests(unittest.TestCase):
+    def test_capture_buttons_describe_the_selected_mode(self):
+        self.assertEqual(MainApp._capture_button_text("game_events"), "Start Game Highlights")
+        self.assertEqual(MainApp._capture_button_text("ai"), "Start AI Highlights")
+
+    @patch("game_capture.main")
+    @patch("app.app_config.load_config", return_value={"capture_mode": "game_events"})
+    def test_game_mode_routes_to_lightweight_worker(self, _load_config, game_capture_main):
+        del _load_config
+        run_worker("capture")
+        game_capture_main.assert_called_once_with()
 
 
 class ObsPreflightSummaryTests(unittest.TestCase):
@@ -108,6 +123,7 @@ class ObsPreflightConnectionTests(unittest.TestCase):
             "recording_folder": tempfile.gettempdir(),
             "output_folder": tempfile.gettempdir(),
             "audio_source_type": "loopback",
+            "capture_mode": "ai",
             "audio_loopback_device_name": "Game Audio",
             "game_events_enabled": False,
         }
@@ -129,6 +145,37 @@ class ObsPreflightConnectionTests(unittest.TestCase):
         )
         client.disconnect.assert_called_once_with()
 
+    @patch("app._check_audio_preflight", side_effect=AssertionError("audio must stay unused"))
+    @patch("app._check_tesseract_preflight", return_value=("optional", "not installed"))
+    @patch("obsws_python.ReqClient")
+    def test_game_mode_skips_audio_and_requires_ocr(
+        self,
+        req_client,
+        _tesseract_check,
+        _audio_check,
+    ):
+        del _tesseract_check, _audio_check
+        client = req_client.return_value
+        client.get_replay_buffer_status.return_value = SimpleNamespace(output_active=True)
+        client.get_record_status.return_value = SimpleNamespace(output_active=False)
+        client.get_stream_status.return_value = SimpleNamespace(output_active=False)
+        fake_config = {
+            "capture_mode": "game_events",
+            "obs_host": "localhost",
+            "obs_port": 4455,
+            "recording_folder": tempfile.gettempdir(),
+            "output_folder": tempfile.gettempdir(),
+            "game_events_enabled": True,
+        }
+
+        result = _check_obs_preflight(fake_config)
+        checks = {check[0]: (check[2], check[3]) for check in result}
+
+        self.assertEqual(checks["audio"][0], "optional")
+        self.assertEqual(checks["ocr"][0], "warning")
+        self.assertIn("needs Tesseract", checks["ocr"][1])
+        client.disconnect.assert_called_once_with()
+
     @patch("app.app_config.load_config", return_value={"obs_host": "localhost", "obs_port": 4455})
     @patch("obsws_python.ReqClient", side_effect=OSError("connection refused"))
     def test_returns_actionable_message_when_obs_is_unavailable(
@@ -143,6 +190,7 @@ class ObsPreflightConnectionTests(unittest.TestCase):
             "recording_folder": tempfile.gettempdir(),
             "output_folder": tempfile.gettempdir(),
             "audio_source_type": "loopback",
+            "capture_mode": "ai",
             "game_events_enabled": False,
         }
         devices = []

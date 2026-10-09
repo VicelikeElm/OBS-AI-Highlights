@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import game_detector
+import game_capture
+from game_capture import build_clip_context
 from game_events import GameEventMonitor, parse_game_events
 from round_tracker import RoundTracker
 import verify_clips
@@ -80,6 +82,67 @@ class GameEventTests(unittest.TestCase):
                 selected_game="Another Game",
             )
         )
+
+    def test_tarkov_process_is_detected(self):
+        detected = game_detector.detect_running_game(
+            [FakeProcess("EscapeFromTarkov.exe")],
+            selected_game="Escape from Tarkov",
+        )
+
+        self.assertEqual(detected["profile_name"], "Tarkov")
+
+    def test_event_clip_context_includes_tags_and_trigger_events(self):
+        tracker = RoundTracker("Rainbow Six Siege", "Siege")
+        event = {
+            "type": "KILL",
+            "text": "AcePlayer eliminated Rival",
+            "timestamp": "2026-10-08T21:00:00",
+        }
+        snapshot = tracker.apply_event(event)
+
+        context = build_clip_context(snapshot, [event])
+
+        self.assertEqual(context["tags"], ["KILL"])
+        self.assertEqual(context["trigger_events"], [event])
+        self.assertEqual(context["capture_source"], "game_event_ocr")
+
+    def test_event_clip_is_saved_with_game_tags(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            recording_folder = Path(temp_dir) / "recordings"
+            recording_folder.mkdir()
+            output_folder = Path(temp_dir) / "output"
+            replay_file = recording_folder / "obs-replay.mp4"
+            replay_file.write_bytes(b"test video")
+            context = {
+                "game": "Rainbow Six Siege",
+                "profile": "Siege",
+                "tags": ["KILL"],
+                "trigger_events": [{"type": "KILL", "text": "eliminated"}],
+            }
+
+            class FakeObsClient:
+                def save_replay_buffer(self):
+                    self.saved = True
+
+            client = FakeObsClient()
+            with patch.object(game_capture, "_wait_for_replay", return_value=replay_file):
+                clip_path = game_capture.save_event_clip(
+                    client,
+                    recording_folder,
+                    output_folder,
+                    context,
+                    1,
+                )
+
+            self.assertTrue(client.saved)
+            self.assertTrue(clip_path.is_file())
+            sidecar = output_folder / "Transcripts" / f"{clip_path.stem}_game.json"
+            self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8")), context)
+            with patch.object(verify_clips, "LIVE_TRANSCRIPT_FOLDER", str(output_folder / "Transcripts")):
+                self.assertEqual(
+                    verify_clips.load_game_context(clip_path.stem),
+                    context,
+                )
 
     def test_game_context_survives_candidate_sidecar_load(self):
         context = {

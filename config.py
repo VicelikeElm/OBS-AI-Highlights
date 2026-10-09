@@ -101,6 +101,7 @@ DEFAULTS = {
     "audio_excitement_moderate_bonus": 10,
     "audio_excitement_strong_bonus": 18,
     "game_events_enabled": True,
+    "capture_mode": "game_events",
     "game_selection": "auto",
     "game_player_name": "",
     "game_tesseract_cmd": "",
