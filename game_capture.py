@@ -12,13 +12,13 @@ import config as app_config
 import game_detector
 from game_events import GameEventMonitor
 from round_tracker import RoundTracker
+import session_stats
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".m4v", ".ts"}
-EVENT_BATCH_SECONDS = 2.0
 REPLAY_WAIT_SECONDS = 30.0
 
 
-def build_clip_context(snapshot, trigger_events):
+def build_clip_context(snapshot, trigger_events, before_seconds=20, after_seconds=5):
     """Build the tag sidecar payload for one OBS Replay Buffer clip."""
     tags = list(dict.fromkeys(
         [event["type"] for event in trigger_events]
@@ -34,7 +34,20 @@ def build_clip_context(snapshot, trigger_events):
         "events": list(snapshot.get("events", [])),
         "trigger_events": list(trigger_events),
         "capture_source": "game_event_ocr",
+        "clip_window": {
+            "before_seconds": before_seconds,
+            "after_seconds": after_seconds,
+        },
     }
+
+
+def clip_save_deadline(event_time, after_seconds):
+    """Wait for the configured post-event footage before saving the replay."""
+    return event_time + max(float(after_seconds), 0.0)
+
+
+def should_trigger_event_clip(event, selected_event_types):
+    return str(event.get("type", "")).upper() in selected_event_types
 
 
 def _replay_files(folder):
@@ -128,14 +141,16 @@ def main():
         app_config.DEFAULTS["recording_folder"],
     )
     output_folder = app_config.get_output_folder(config)
-    interval = max(float(config.get("game_ocr_interval", 1.0)), 0.25)
+    interval = 1.0
     client = _connect_obs(config)
     monitor = None
     tracker = None
     active_game = None
-    pending_events = []
-    pending_snapshot = None
-    save_at = None
+    active_session_id = None
+    pending_batches = []
+    active_before_seconds = 20
+    active_after_seconds = 5
+    selected_event_types = set()
     next_game_check = 0.0
     next_obs_check = 0.0
     next_ocr_poll = 0.0
@@ -160,33 +175,66 @@ def main():
                     selected_game=selected_game if selected_game != "auto" else None,
                     custom_profile={
                         "game_name": config.get("custom_game_name", ""),
-                        "process_name": config.get("custom_game_process_name", ""),
+                        "process_names": app_config.get_game_profile_settings(
+                            config, "custom"
+                        ).get("process_names", []),
                     } if selected_game == "custom" else None,
+                    profile_overrides=config.get("game_profiles", {}),
                 )
                 if detected is None:
                     monitor = None
                     tracker = None
+                    if active_session_id:
+                        session_stats.end_session(active_session_id)
+                        active_session_id = None
                     active_game = None
                 elif (
                     active_game is None
                     or detected["game_name"] != active_game["game_name"]
                 ):
+                    if active_session_id:
+                        session_stats.end_session(active_session_id)
+                    settings_key = (
+                        "custom"
+                        if detected["profile_name"] == "Custom"
+                        else detected["game_name"]
+                    )
+                    profile_settings = app_config.get_game_profile_settings(
+                        config,
+                        settings_key,
+                    )
+                    if (
+                        settings_key not in config.get("game_profiles", {})
+                        and selected_game == "auto"
+                    ):
+                        profile_settings = app_config.get_game_profile_settings(
+                            config,
+                            "auto",
+                        )
+                    interval = max(float(profile_settings["ocr_interval"]), 0.25)
+                    selected_event_types = set(profile_settings["event_clip_types"])
+                    active_before_seconds = int(profile_settings["clip_before_seconds"])
+                    active_after_seconds = int(profile_settings["clip_after_seconds"])
                     active_game = detected
                     tracker = RoundTracker(
                         detected["game_name"],
                         detected["profile_name"],
                     )
                     region = {
-                        "left": float(config.get("game_ocr_left", 0.70)),
-                        "top": float(config.get("game_ocr_top", 0.04)),
-                        "width": float(config.get("game_ocr_width", 0.29)),
-                        "height": float(config.get("game_ocr_height", 0.30)),
+                        "left": float(profile_settings["ocr_left"]),
+                        "top": float(profile_settings["ocr_top"]),
+                        "width": float(profile_settings["ocr_width"]),
+                        "height": float(profile_settings["ocr_height"]),
                     }
                     monitor = GameEventMonitor(
                         detected,
                         region=region,
-                        player_name=config.get("game_player_name", ""),
-                        tesseract_cmd=config.get("game_tesseract_cmd", ""),
+                        player_name=profile_settings["player_name"],
+                        tesseract_cmd=profile_settings["tesseract_cmd"],
+                    )
+                    active_session_id = session_stats.start_game_session(
+                        detected["game_name"],
+                        detected["profile_name"],
                     )
                     next_ocr_poll = 0.0
                     print(
@@ -205,13 +253,50 @@ def main():
                     snapshot = tracker.apply_event(event)
                     if snapshot is None:
                         continue
-                    pending_events.append(event)
-                    pending_snapshot = snapshot
-                    save_at = time.monotonic() + EVENT_BATCH_SECONDS
+                    session_stats.record_game_event(active_session_id, event, snapshot)
+                    if should_trigger_event_clip(event, selected_event_types):
+                        event_time = time.monotonic()
+                        batch = next(
+                            (
+                                candidate
+                                for candidate in reversed(pending_batches)
+                                if candidate["session_id"] == active_session_id
+                            ),
+                            None,
+                        )
+                        if batch is None:
+                            batch = {
+                                "session_id": active_session_id,
+                                "events": [],
+                                "snapshot": snapshot,
+                                "before_seconds": active_before_seconds,
+                                "after_seconds": active_after_seconds,
+                                "save_at": 0,
+                            }
+                            pending_batches.append(batch)
+                        batch["events"].append(event)
+                        batch["snapshot"] = snapshot
+                        batch["save_at"] = max(
+                            batch["save_at"],
+                            clip_save_deadline(event_time, active_after_seconds),
+                        )
                     print(f"Recognized {event['type']}: {event['text']}")
 
-            if pending_events and save_at is not None and time.monotonic() >= save_at:
-                context = build_clip_context(pending_snapshot, pending_events)
+            ready_batch = next(
+                (
+                    batch
+                    for batch in pending_batches
+                    if time.monotonic() >= batch["save_at"]
+                ),
+                None,
+            )
+            if ready_batch is not None:
+                context = build_clip_context(
+                    ready_batch["snapshot"],
+                    ready_batch["events"],
+                    ready_batch["before_seconds"],
+                    ready_batch["after_seconds"],
+                )
                 clip_path = save_event_clip(
                     client,
                     recording_folder,
@@ -219,14 +304,15 @@ def main():
                     context,
                     sequence,
                 )
+                session_stats.record_game_clip(ready_batch["session_id"], clip_path)
                 sequence += 1
                 print(f"Saved and tagged game clip: {clip_path}")
-                pending_events = []
-                pending_snapshot = None
-                save_at = None
+                pending_batches.remove(ready_batch)
 
             time.sleep(0.25)
     except KeyboardInterrupt:
         print("Game-event capture stopped.")
     finally:
+        if active_session_id:
+            session_stats.end_session(active_session_id)
         client.disconnect()

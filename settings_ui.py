@@ -131,6 +131,8 @@ NUMERIC_LIMITS = (
     ("Game OCR region width", "game_ocr_width", 0.01, 1.0),
     ("Game OCR region height", "game_ocr_height", 0.01, 1.0),
     ("Game OCR interval", "game_ocr_interval", 0.25, 10.0),
+    ("Clip footage before event", "game_clip_before_seconds", 0, 120),
+    ("Clip footage after event", "game_clip_after_seconds", 0, 120),
 )
 
 CAPTION_LIMITS = (
@@ -327,6 +329,9 @@ class SettingsUI:
         self.game_ocr_width_var = tk.StringVar()
         self.game_ocr_height_var = tk.StringVar()
         self.game_ocr_interval_var = tk.StringVar()
+        self.game_clip_before_var = tk.StringVar()
+        self.game_clip_after_var = tk.StringVar()
+        self.game_event_vars = {}
         self.pause_end_pattern_var = tk.StringVar()
 
         self.render_style_var = tk.StringVar()
@@ -726,6 +731,52 @@ class SettingsUI:
         self._add_labeled_spinbox(parent, "Width", self.game_ocr_width_var, 0.01, 1.0, 0.01, fmt="%.2f")
         self._add_labeled_spinbox(parent, "Height", self.game_ocr_height_var, 0.01, 1.0, 0.01, fmt="%.2f")
         self._add_labeled_spinbox(parent, "OCR interval (seconds)", self.game_ocr_interval_var, 0.25, 10.0, 0.25)
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=10)
+        ttk.Label(parent, text="Save clips for these events").pack(anchor="w")
+        for event_type, label in (
+            ("KILL", "Kills"),
+            ("DEATH", "Deaths"),
+            ("HEADSHOT", "Headshots"),
+            ("PLANT", "Plants"),
+            ("DEFUSE", "Defuses"),
+            ("ROUND_WIN", "Round wins"),
+            ("CLUTCH", "Clutches"),
+            ("FLAWLESS_ROUND", "Flawless rounds"),
+            ("MATCH_POINT", "Match point"),
+            ("OVERTIME", "Overtime"),
+        ):
+            variable = tk.BooleanVar()
+            self.game_event_vars[event_type] = variable
+            ttk.Checkbutton(parent, text=label, variable=variable).pack(anchor="w")
+        timing_row = ttk.Frame(parent)
+        timing_row.pack(fill="x", pady=(8, 2))
+        ttk.Label(timing_row, text="Seconds before").pack(side="left")
+        ttk.Spinbox(
+            timing_row,
+            from_=0,
+            to=120,
+            increment=1,
+            textvariable=self.game_clip_before_var,
+            width=6,
+        ).pack(side="left", padx=(4, 12))
+        ttk.Label(timing_row, text="Seconds after").pack(side="left")
+        ttk.Spinbox(
+            timing_row,
+            from_=0,
+            to=120,
+            increment=1,
+            textvariable=self.game_clip_after_var,
+            width=6,
+        ).pack(side="left", padx=(4, 0))
+        ttk.Label(
+            parent,
+            text=(
+                "OBS Replay Buffer must be set to at least the before + after total "
+                "(25 seconds by default). Saving waits until the after-event time has passed."
+            ),
+            wraplength=680,
+            foreground="#888888",
+        ).pack(fill="x", pady=(2, 8))
         ttk.Label(
             parent,
             text=(
@@ -1435,6 +1486,21 @@ class SettingsUI:
     # Config <-> fields
     # -----------------------------------------------------------
 
+    def load_game_profile_fields(self, settings):
+        """Refresh the shared Game Events controls when Run selects another game."""
+        self.game_player_name_var.set(str(settings.get("player_name", "")))
+        self.game_tesseract_cmd_var.set(str(settings.get("tesseract_cmd", "")))
+        self.game_ocr_left_var.set(str(settings.get("ocr_left", 0.70)))
+        self.game_ocr_top_var.set(str(settings.get("ocr_top", 0.04)))
+        self.game_ocr_width_var.set(str(settings.get("ocr_width", 0.29)))
+        self.game_ocr_height_var.set(str(settings.get("ocr_height", 0.30)))
+        self.game_ocr_interval_var.set(str(settings.get("ocr_interval", 1.0)))
+        self.game_clip_before_var.set(str(settings.get("clip_before_seconds", 20)))
+        self.game_clip_after_var.set(str(settings.get("clip_after_seconds", 5)))
+        selected_events = set(settings.get("event_clip_types", []))
+        for event_type, variable in self.game_event_vars.items():
+            variable.set(event_type in selected_events)
+
     def _load_config_into_fields(self):
         config = self.config
 
@@ -1478,13 +1544,12 @@ class SettingsUI:
         self.audio_excitement_moderate_bonus_var.set(str(config.get("audio_excitement_moderate_bonus", 10)))
         self.audio_excitement_strong_bonus_var.set(str(config.get("audio_excitement_strong_bonus", 18)))
         self.game_events_enabled_var.set(bool(config.get("game_events_enabled", True)))
-        self.game_player_name_var.set(str(config.get("game_player_name", "")))
-        self.game_tesseract_cmd_var.set(str(config.get("game_tesseract_cmd", "")))
-        self.game_ocr_left_var.set(str(config.get("game_ocr_left", 0.70)))
-        self.game_ocr_top_var.set(str(config.get("game_ocr_top", 0.04)))
-        self.game_ocr_width_var.set(str(config.get("game_ocr_width", 0.29)))
-        self.game_ocr_height_var.set(str(config.get("game_ocr_height", 0.30)))
-        self.game_ocr_interval_var.set(str(config.get("game_ocr_interval", 1.0)))
+        self.load_game_profile_fields(
+            app_config.get_game_profile_settings(
+                config,
+                config.get("game_selection", "auto"),
+            )
+        )
 
         self._display_preset_phrases(active_key)
 
@@ -1749,8 +1814,6 @@ class SettingsUI:
         config["remote_api_enabled"] = self.remote_api_enabled_var.get()
         config["audio_excitement_enabled"] = self.audio_excitement_enabled_var.get()
         config["game_events_enabled"] = self.game_events_enabled_var.get()
-        config["game_player_name"] = self.game_player_name_var.get().strip()
-        config["game_tesseract_cmd"] = self.game_tesseract_cmd_var.get().strip()
 
         try:
             config["obs_port"] = int(self.obs_port_var.get().strip())
@@ -1764,17 +1827,33 @@ class SettingsUI:
             config["audio_excitement_strong_ratio"] = float(self.audio_excitement_strong_ratio_var.get().strip())
             config["audio_excitement_moderate_bonus"] = int(self.audio_excitement_moderate_bonus_var.get().strip())
             config["audio_excitement_strong_bonus"] = int(self.audio_excitement_strong_bonus_var.get().strip())
-            config["game_ocr_left"] = float(self.game_ocr_left_var.get().strip())
-            config["game_ocr_top"] = float(self.game_ocr_top_var.get().strip())
-            config["game_ocr_width"] = float(self.game_ocr_width_var.get().strip())
-            config["game_ocr_height"] = float(self.game_ocr_height_var.get().strip())
-            config["game_ocr_interval"] = float(self.game_ocr_interval_var.get().strip())
+            game_profile_settings = {
+                "player_name": self.game_player_name_var.get().strip(),
+                "tesseract_cmd": self.game_tesseract_cmd_var.get().strip(),
+                "ocr_left": float(self.game_ocr_left_var.get().strip()),
+                "ocr_top": float(self.game_ocr_top_var.get().strip()),
+                "ocr_width": float(self.game_ocr_width_var.get().strip()),
+                "ocr_height": float(self.game_ocr_height_var.get().strip()),
+                "ocr_interval": float(self.game_ocr_interval_var.get().strip()),
+                "event_clip_types": [
+                    event_type
+                    for event_type, variable in self.game_event_vars.items()
+                    if variable.get()
+                ],
+                "clip_before_seconds": int(self.game_clip_before_var.get().strip()),
+                "clip_after_seconds": int(self.game_clip_after_var.get().strip()),
+            }
             caption_style_key = self._current_caption_style_key()
             caption_style_fields = self._collect_caption_style_fields()
         except ValueError as exc:
             messagebox.showerror("Invalid value", f"One of the numeric fields isn't a valid number:\n{exc}")
             return
 
+        app_config.save_game_profile_settings(
+            config,
+            config.get("game_selection", "auto"),
+            game_profile_settings,
+        )
         problems = validate_settings(config, caption_style_key, caption_style_fields)
 
         if problems:

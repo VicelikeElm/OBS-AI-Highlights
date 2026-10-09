@@ -111,6 +111,7 @@ DEFAULTS = {
     "game_events_enabled": True,
     "capture_mode": "game_events",
     "game_selection": "auto",
+    "game_profiles": {},
     "custom_game_name": "",
     "custom_game_process_name": "",
     "game_player_name": "",
@@ -120,7 +121,106 @@ DEFAULTS = {
     "game_ocr_width": 0.29,
     "game_ocr_height": 0.30,
     "game_ocr_interval": 1.0,
+    "game_event_clip_types": ["KILL", "HEADSHOT", "ROUND_WIN", "CLUTCH"],
+    "game_clip_before_seconds": 20,
+    "game_clip_after_seconds": 5,
 }
+
+GAME_PROFILE_DEFAULTS = {
+    "player_name": "",
+    "tesseract_cmd": "",
+    "ocr_left": 0.70,
+    "ocr_top": 0.04,
+    "ocr_width": 0.29,
+    "ocr_height": 0.30,
+    "ocr_interval": 1.0,
+    "process_names": [],
+    "event_clip_types": ["KILL", "HEADSHOT", "ROUND_WIN", "CLUTCH"],
+    "clip_before_seconds": 20,
+    "clip_after_seconds": 5,
+}
+
+GAME_PROFILE_LEGACY_KEYS = {
+    "player_name": "game_player_name",
+    "tesseract_cmd": "game_tesseract_cmd",
+    "ocr_left": "game_ocr_left",
+    "ocr_top": "game_ocr_top",
+    "ocr_width": "game_ocr_width",
+    "ocr_height": "game_ocr_height",
+    "ocr_interval": "game_ocr_interval",
+    "event_clip_types": "game_event_clip_types",
+    "clip_before_seconds": "game_clip_before_seconds",
+    "clip_after_seconds": "game_clip_after_seconds",
+}
+
+
+def game_profile_key(selection):
+    """Return the stable settings-map key for a Run-tab game selection."""
+    return str(selection or "auto").strip() or "auto"
+
+
+def get_game_profile_settings(config, profile_key=None):
+    """Return a complete copy of one game's settings, migrating active legacy values."""
+    current_key = game_profile_key(config.get("game_selection"))
+    profile_key = game_profile_key(profile_key if profile_key is not None else current_key)
+    profiles = config.get("game_profiles")
+    profiles = profiles if isinstance(profiles, dict) else {}
+    saved = profiles.get(profile_key, {})
+    saved = saved if isinstance(saved, dict) else {}
+
+    result = dict(GAME_PROFILE_DEFAULTS)
+    if profile_key == current_key and not profiles:
+        for field, legacy_key in GAME_PROFILE_LEGACY_KEYS.items():
+            if legacy_key in config:
+                result[field] = config[legacy_key]
+        if profile_key == "custom":
+            process_name = str(config.get("custom_game_process_name", "")).strip()
+            if process_name:
+                result["process_names"] = [process_name]
+    result.update(saved)
+    result["process_names"] = _normalize_process_names(result.get("process_names", []))
+    result["event_clip_types"] = _normalize_event_types(result.get("event_clip_types", []))
+    return result
+
+
+def save_game_profile_settings(config, profile_key, settings):
+    """Store game-specific settings and keep active legacy fields in sync."""
+    key = game_profile_key(profile_key)
+    profiles = config.get("game_profiles")
+    profiles = dict(profiles) if isinstance(profiles, dict) else {}
+    current = get_game_profile_settings(config, key)
+    current.update(settings)
+    current["process_names"] = _normalize_process_names(current.get("process_names", []))
+    current["event_clip_types"] = _normalize_event_types(current.get("event_clip_types", []))
+    profiles[key] = current
+    config["game_profiles"] = profiles
+
+    if key == game_profile_key(config.get("game_selection")):
+        for field, legacy_key in GAME_PROFILE_LEGACY_KEYS.items():
+            config[legacy_key] = current[field]
+        if key == "custom" and current["process_names"]:
+            config["custom_game_process_name"] = current["process_names"][0]
+
+
+def _normalize_process_names(value):
+    if isinstance(value, str):
+        value = value.split(",")
+    if not isinstance(value, (list, tuple)):
+        return []
+    return list(dict.fromkeys(
+        name.strip() for name in value
+        if isinstance(name, str) and name.strip()
+    ))
+
+
+def _normalize_event_types(value):
+    if not isinstance(value, (list, tuple)):
+        return []
+    return list(dict.fromkeys(
+        str(event_type).strip().upper()
+        for event_type in value
+        if str(event_type).strip()
+    ))
 
 
 def _atomic_write_json(path, payload):
@@ -188,12 +288,34 @@ def _migrate_audio_device_name(config):
         config["audio_loopback_device_name"] = old_name
 
 
+def _migrate_game_profile_settings(config, saved_config):
+    """Move legacy flat game values into the game selected when the old config was saved."""
+    profiles = config.get("game_profiles")
+    profiles = dict(profiles) if isinstance(profiles, dict) else {}
+    if "game_profiles" not in saved_config and not profiles:
+        key = game_profile_key(config.get("game_selection"))
+        profile = dict(GAME_PROFILE_DEFAULTS)
+        for field, legacy_key in GAME_PROFILE_LEGACY_KEYS.items():
+            if legacy_key in saved_config:
+                profile[field] = saved_config[legacy_key]
+        if key == "custom":
+            process_name = str(saved_config.get("custom_game_process_name", "")).strip()
+            if process_name:
+                profile["process_names"] = [process_name]
+        profile["process_names"] = _normalize_process_names(profile["process_names"])
+        profile["event_clip_types"] = _normalize_event_types(profile["event_clip_types"])
+        profiles[key] = profile
+    config["game_profiles"] = profiles
+
+
 def load_config():
     """Returns the config dict, DEFAULTS overlaid with whatever's saved."""
     config = dict(DEFAULTS)
-    config.update(_read_json(CONFIG_FILE, {}))
+    saved_config = _read_json(CONFIG_FILE, {})
+    config.update(saved_config)
     _migrate_single_custom_preset(config)
     _migrate_audio_device_name(config)
+    _migrate_game_profile_settings(config, saved_config)
     return config
 
 

@@ -60,20 +60,30 @@ def detect_running_game(
     profile_dir=None,
     selected_game=None,
     custom_profile=None,
+    profile_overrides=None,
 ):
     """Return the matching game/profile and process name, or None if unsupported."""
     profiles = load_game_profiles(profile_dir)
     if selected_game and selected_game.casefold() == "custom":
         game_name = str((custom_profile or {}).get("game_name", "")).strip()
-        process_name = str((custom_profile or {}).get("process_name", "")).strip()
+        process_names = (custom_profile or {}).get("process_names")
+        if not process_names:
+            process_names = str((custom_profile or {}).get("process_name", "")).split(",")
+        elif isinstance(process_names, str):
+            process_names = process_names.split(",")
+        process_names = [
+            str(name).strip()
+            for name in process_names
+            if str(name).strip()
+        ]
         profiles = (
             [{
                 "game_name": game_name,
                 "profile_name": "Custom",
-                "process_names": [process_name],
+                "process_names": process_names,
                 "event_patterns": {},
             }]
-            if game_name and process_name
+            if game_name and process_names
             else []
         )
     elif selected_game and selected_game.casefold() != "auto":
@@ -82,6 +92,22 @@ def detect_running_game(
             for profile in profiles
             if profile["game_name"].casefold() == selected_game.casefold()
         ]
+    profile_overrides = profile_overrides if isinstance(profile_overrides, dict) else {}
+    for profile in profiles:
+        override = profile_overrides.get(profile["game_name"], {})
+        if not isinstance(override, dict):
+            continue
+        process_names = override.get("process_names")
+        if isinstance(process_names, (list, str)):
+            if isinstance(process_names, str):
+                process_names = process_names.split(",")
+            normalized_names = [
+                str(name).strip()
+                for name in process_names
+                if str(name).strip()
+            ]
+            if normalized_names:
+                profile["process_names"] = normalized_names
     processes = process_iter if process_iter is not None else psutil.process_iter(["name"])
 
     process_names = {}

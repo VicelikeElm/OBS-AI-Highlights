@@ -8,6 +8,13 @@
 
 Built by [Vice Media Solutions](assets/vivce_media_solutions.png).
 
+## What's new in v1.0.9
+
+- Save game process names, player names, and OCR settings independently per game.
+- Choose which game events trigger clips and configure footage before and after them.
+- Filter clips by game or event tag, and review event counts, rounds, achievements,
+  and saved clips in game-session stats.
+
 Watches OBS's replay buffer during a live stream, uses a live Whisper
 transcript - plus a live audio-loudness signal that catches reactions
 even without a matching trigger phrase - to score which moments are
@@ -79,8 +86,9 @@ Highlights** from the Start Menu. One window, five tabs:
 - **Run** — choose lightweight Game events or the existing AI audio/transcript
   capture. Game events mode avoids loading Whisper or capturing audio; it
   watches the selected game's on-screen feed and saves/tag OBS Replay Buffer
-  clips when events are recognized. It is designed for low resource use, but
-  screen OCR can miss or misread text and needs Tesseract installed.
+  clips when selected events are recognized. It is designed for low resource
+  use, but screen OCR can miss or misread text; Tesseract is bundled with
+  the installer.
   Rainbow Six Siege has event patterns. Tarkov process detection is included,
   but its OCR event patterns still need in-game verification before automatic
   Tarkov event clips can be relied on.
@@ -94,18 +102,23 @@ Highlights** from the Start Menu. One window, five tabs:
   OBS connection, the needed audio/OCR setup for the selected mode, and
   recording/output folders before capture.
   The check is advisory for OBS readiness, which doesn't prevent capture
-  from waiting for OBS to become active. Game Highlights will not start
-  until Tesseract is available, and explains how to install or configure it.
+  from waiting for OBS to become active. Game Highlights checks that
+  Tesseract is available and explains how to configure another installation.
   New installations get a short setup guide, and a
   **Review clips** shortcut appears when clips are available. Empty Clips
   and Sessions views explain what to do next. The Run tab also reports a
   detected supported game and its profile. The game dropdown includes
   Auto-detect, Rainbow Six Siege, Escape from Tarkov, and Custom. For a
-  custom game, enter its display name and Windows process name; enter your
-  in-game name to help match kills and deaths. These choices are saved and
-  take effect on the next capture. Custom profiles use the common basic HUD
+  custom game, enter its display name and Windows process name; supported
+  games can also override their detected process names. Each game's process
+  names and in-game player name are saved separately and take effect on the
+  next capture. Custom profiles use the common basic HUD
   event recognition; game-specific event patterns may still need tuning.
-  The AI audio/transcript mode can still use the game events for extra context.
+  In Settings → Advanced → Game Events, tune the OCR region and interval per
+  game, choose which recognized events trigger a clip, and set the footage
+  window before and after an event. Defaults are 20 seconds before and
+  5 seconds after, so set OBS Replay Buffer to at least 25 seconds. The AI
+  audio/transcript mode can still use selected game events for extra context.
 - **Clips** — every detected clip in one list, across every pipeline
   stage, with its score, status, duration, and detection reasons/full
   transcript. Play a clip in your default video player, Approve or
@@ -113,16 +126,17 @@ Highlights** from the Start Menu. One window, five tabs:
   reject is easy to undo), Render a Verified one right now instead of
   waiting for the next batch, or Delete a clip you don't want outright.
   Ctrl+click/Shift+click to select several clips and approve, reject,
-  render, or delete them all at once. Filter by status and click a
-  column header to sort. Selecting a clip shows a preview thumbnail and
+  render, or delete them all at once. Filter by status, game, or event tag
+  and click a column header to sort. Selecting a clip shows a preview thumbnail and
   its trim points - override the start/end time directly if the
   auto-detected trim cut off a word or left in too much dead air, then
   re-render to see it.
-- **Sessions** — every capture run is tracked as a session: how many
-  moments were analyzed, how many were ignored/possible/saved, the
+- **Sessions** — every capture run is tracked as a session. AI sessions show
+  how many moments were analyzed, how many were ignored/possible/saved, the
   average score, and which phrases were actually most responsible for
-  good (or rejected) clips - useful for tuning a preset against real
-  data instead of guessing. Rename or delete a session's stats record
+  good (or rejected) clips, and can include game-event stats too.
+  Game-event sessions show event totals, completed rounds, notable
+  achievements, and saved game clips. Rename or delete a session's stats record
   from here (clip files themselves aren't touched).
 - **Settings** — choose a preset, connect OBS, pick recording/output
   folders, and choose a video layout from the main settings tabs. The
@@ -171,7 +185,11 @@ Tesseract path in Settings → Advanced → Game Events can point to a different
 installation; leave it blank to use the bundled copy. Choose the game and
 enter your in-game player name on the Run tab. Configure the OCR region as
 normalized left/top/width/height values against the primary display if the
-event feed is not recognized. AI audio/transcript mode does not use OCR.
+event feed is not recognized. The per-game event checkboxes control which
+recognized events trigger clips. Configure OBS Replay Buffer for at least
+the selected before + after duration (25 seconds by default); the app waits
+for the after-event window before saving. AI audio/transcript mode also uses
+game OCR for optional event context when enabled.
 
 ## Running from source
 

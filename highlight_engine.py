@@ -1837,9 +1837,14 @@ def run_live_sermon(
     game_event_stop = threading.Event()
     game_event_thread = None
     game_clip_saved_round = None
+    game_clip_event_types = set()
+    game_clip_after_seconds = 5
+    pending_game_snapshot = None
+    pending_game_save_at = None
 
     def start_game_event_monitor():
         nonlocal active_game, game_tracker, game_event_thread
+        nonlocal game_clip_event_types, game_clip_after_seconds
 
         if not CONFIG.get("game_events_enabled", True) or game_tracker is not None:
             return
@@ -1849,33 +1854,51 @@ def run_live_sermon(
             selected_game=selected_game if selected_game != "auto" else None,
             custom_profile={
                 "game_name": CONFIG.get("custom_game_name", ""),
-                "process_name": CONFIG.get("custom_game_process_name", ""),
+                "process_names": app_config.get_game_profile_settings(
+                    CONFIG, "custom"
+                ).get("process_names", []),
             } if selected_game == "custom" else None,
+            profile_overrides=CONFIG.get("game_profiles", {}),
         )
         if detected is None:
             return
 
+        settings_key = (
+            "custom"
+            if detected["profile_name"] == "Custom"
+            else detected["game_name"]
+        )
+        game_settings = app_config.get_game_profile_settings(CONFIG, settings_key)
+        if settings_key not in CONFIG.get("game_profiles", {}) and selected_game == "auto":
+            game_settings = app_config.get_game_profile_settings(CONFIG, "auto")
+        session_stats.set_game_session_profile(
+            session_id,
+            detected["game_name"],
+            detected["profile_name"],
+        )
+        game_clip_event_types = set(game_settings["event_clip_types"])
+        game_clip_after_seconds = int(game_settings["clip_after_seconds"])
         active_game = detected
         game_tracker = RoundTracker(
             detected["game_name"],
             detected["profile_name"],
         )
         region = {
-            "left": float(CONFIG.get("game_ocr_left", 0.70)),
-            "top": float(CONFIG.get("game_ocr_top", 0.04)),
-            "width": float(CONFIG.get("game_ocr_width", 0.29)),
-            "height": float(CONFIG.get("game_ocr_height", 0.30)),
+            "left": float(game_settings["ocr_left"]),
+            "top": float(game_settings["ocr_top"]),
+            "width": float(game_settings["ocr_width"]),
+            "height": float(game_settings["ocr_height"]),
         }
         monitor = game_events.GameEventMonitor(
             detected,
             region=region,
-            player_name=CONFIG.get("game_player_name", ""),
-            tesseract_cmd=CONFIG.get("game_tesseract_cmd", ""),
+            player_name=game_settings["player_name"],
+            tesseract_cmd=game_settings["tesseract_cmd"],
         )
         game_event_thread = threading.Thread(
             target=monitor.run,
             args=(game_event_stop, game_event_queue),
-            kwargs={"interval": CONFIG.get("game_ocr_interval", 1.0)},
+            kwargs={"interval": game_settings["ocr_interval"]},
             daemon=True,
         )
         game_event_thread.start()
@@ -2009,7 +2032,7 @@ def run_live_sermon(
                         f"('{status.get('scene_name', '')}'): {new_label}"
                     )
 
-            qualifying_game_snapshot = None
+            qualifying_game_snapshot = pending_game_snapshot
             while True:
                 try:
                     message_type, payload = game_event_queue.get_nowait()
@@ -2025,12 +2048,21 @@ def run_live_sermon(
                 if snapshot is None:
                     continue
 
+                session_stats.record_game_event(session_id, payload, snapshot)
                 game_context = snapshot
                 log(f"Game event: {payload['type']} - {payload.get('text', '')}")
-                if RoundTracker.should_trigger(snapshot, SAVE_THRESHOLD):
+                if (
+                    payload.get("type", "").upper() in game_clip_event_types
+                    and RoundTracker.should_trigger(snapshot, SAVE_THRESHOLD)
+                ):
                     qualifying_game_snapshot = snapshot
+                    pending_game_snapshot = snapshot
+                    pending_game_save_at = max(
+                        pending_game_save_at or 0,
+                        time.monotonic() + game_clip_after_seconds,
+                    )
 
-            if qualifying_game_snapshot:
+            if qualifying_game_snapshot and time.monotonic() >= (pending_game_save_at or 0):
                 paused = (
                     (remote_state is not None and remote_state.is_paused())
                     or scene_rule_action in ("pause", "ignore")
@@ -2067,6 +2099,7 @@ def run_live_sermon(
                         game_clip_saved_round = qualifying_game_snapshot["round"]
                     if saved_clip_path:
                         session_stats.record_saved_clip(session_id, saved_clip_path)
+                        session_stats.record_game_clip_count(session_id)
                         session_stats.record_thought(
                             session_id,
                             "saved",
@@ -2074,6 +2107,8 @@ def run_live_sermon(
                             [],
                             [],
                         )
+                    pending_game_snapshot = None
+                    pending_game_save_at = None
                     continue
 
             # ---------------------------------------------

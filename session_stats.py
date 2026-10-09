@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Per-session detection statistics and a lightweight session registry.
+"""Per-session capture statistics and a lightweight session registry.
 
-A "session" corresponds to one continuous run_live_sermon() call - one
-OBS activity period, from when live capture starts until the service
-ends. This is a metadata/stats layer only - it does NOT move or
+A session corresponds to one continuous AI or game-event capture run.
+This is a metadata/stats layer only - it does NOT move or
 reorganize the actual Raw/Verified/Review/Ready clip files, which stay
 in their existing flat, already-proven folder structure. Sessions are
-for browsing history and tuning presets against real detection data
-(how many thoughts were analyzed, how many were possible/saved, which
-phrases actually drove scores, average score) rather than guessing.
+for browsing history and tuning against detection data, game events,
+rounds, achievements, and saved clips.
 
 One JSON file per session under <output folder>/Sessions/<session_id>.json,
 written atomically on every update so a mid-session crash loses at most
@@ -53,8 +51,7 @@ def _read_json(path, default=None):
 
 
 def start_session(preset_label):
-    """Creates a new session record and returns its session_id. Call
-    once at the top of each run_live_sermon() call."""
+    """Create a general capture session record and return its session_id."""
     now = datetime.now()
 
     # Microseconds included so two sessions starting within the same
@@ -83,6 +80,76 @@ def start_session(preset_label):
     _atomic_write_json(_session_path(session_id), record)
 
     return session_id
+
+
+def start_game_session(game_name, profile_name):
+    """Create a session record for one continuous game-event capture."""
+    session_id = start_session(f"{game_name} game events")
+    record = _read_json(_session_path(session_id))
+    record["capture_mode"] = "game_events"
+    record["game_name"] = game_name
+    record["game_profile"] = profile_name
+    record["game_event_counts"] = {}
+    record["rounds_completed"] = 0
+    record["notable_achievements"] = []
+    record["game_clips_saved"] = 0
+    _atomic_write_json(_session_path(session_id), record)
+    return session_id
+
+
+def set_game_session_profile(session_id, game_name, profile_name):
+    """Attach game identity and counters to an existing AI capture session."""
+    record = _read_json(_session_path(session_id))
+    if not record:
+        return
+    record["game_name"] = game_name
+    record["game_profile"] = profile_name
+    record.setdefault("game_event_counts", {})
+    record.setdefault("rounds_completed", 0)
+    record.setdefault("notable_achievements", [])
+    record.setdefault("game_clips_saved", 0)
+    _atomic_write_json(_session_path(session_id), record)
+
+
+def record_game_event(session_id, event, snapshot):
+    """Persist recognized event totals and notable round achievements."""
+    record = _read_json(_session_path(session_id))
+    if not record:
+        return
+
+    event_type = str(event.get("type", "")).upper()
+    counts = record.setdefault("game_event_counts", {})
+    counts[event_type] = counts.get(event_type, 0) + 1
+    if event_type == "ROUND_WIN":
+        record["rounds_completed"] = record.get("rounds_completed", 0) + 1
+
+    achievements = record.setdefault("notable_achievements", [])
+    for achievement in snapshot.get("achievements", []):
+        if achievement not in achievements:
+            achievements.append(achievement)
+
+    _atomic_write_json(_session_path(session_id), record)
+
+
+def record_game_clip(session_id, clip_path):
+    """Record a saved event-triggered game clip in its capture session."""
+    record = _read_json(_session_path(session_id))
+    if not record:
+        return
+
+    record["saved_clips"].append(str(clip_path))
+    record["saved_count"] = record.get("saved_count", 0) + 1
+    record["game_clips_saved"] = record.get("game_clips_saved", 0) + 1
+    _atomic_write_json(_session_path(session_id), record)
+
+
+def record_game_clip_count(session_id):
+    """Count a game-triggered clip already recorded by another session path."""
+    record = _read_json(_session_path(session_id))
+    if not record:
+        return
+    record["game_clips_saved"] = record.get("game_clips_saved", 0) + 1
+    _atomic_write_json(_session_path(session_id), record)
 
 
 def record_thought(session_id, status, score, matched_phrases=None, admin_matched_phrases=None):

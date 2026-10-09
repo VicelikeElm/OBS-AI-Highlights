@@ -237,6 +237,29 @@ def _extract_frame(source_path, seek_seconds, thumbnail_path):
     return result.returncode == 0 and thumbnail_path.exists()
 
 
+def filter_game_clips(clips, game_filter="All", event_filter="All"):
+    """Filter clip records by their optional game sidecar metadata."""
+    def context_for(clip):
+        context = clip.get("game_context")
+        return context if isinstance(context, dict) else {}
+
+    filtered = clips
+    if game_filter != "All":
+        filtered = [
+            clip
+            for clip in filtered
+            if context_for(clip).get("game") == game_filter
+        ]
+    if event_filter != "All":
+        filtered = [
+            clip
+            for clip in filtered
+            if isinstance(context_for(clip).get("tags"), list)
+            and event_filter in context_for(clip)["tags"]
+        ]
+    return filtered
+
+
 def get_thumbnail(base_name, force=False):
     """A small PNG preview frame for this clip, generated via ffmpeg and
     cached in THUMBNAIL_FOLDER - the rendered Short if there is one

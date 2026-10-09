@@ -665,6 +665,20 @@ class MainApp:
         )
         self._capture_mode = capture_mode if capture_mode in self._capture_mode_to_label else "game_events"
         self.game_player_name_var = self.settings_ui.game_player_name_var
+        self._active_game_profile_key = app_config.game_profile_key(selected_game)
+        profile_settings = app_config.get_game_profile_settings(settings, selected_game)
+        self._game_profile_defaults = {
+            profile["game_name"]: profile.get("process_names", [])
+            for profile in game_detector.load_game_profiles()
+        }
+        initial_process_names = profile_settings.get("process_names") or self._game_profile_defaults.get(
+            selected_game, []
+        )
+        if selected_game == "custom" and not initial_process_names:
+            initial_process_names = [settings.get("custom_game_process_name", "")]
+        self.game_process_names_var = tk.StringVar(
+            value=", ".join(name for name in initial_process_names if name)
+        )
 
         game_frame = ttk.LabelFrame(parent, text="Game highlights (optional)", padding=8)
         game_frame.pack(fill="x", pady=(0, 8))
@@ -703,8 +717,23 @@ class MainApp:
         self.custom_game_name_var = tk.StringVar(
             value=str(settings.get("custom_game_name", ""))
         )
-        self.custom_game_process_var = tk.StringVar(
-            value=str(settings.get("custom_game_process_name", ""))
+        self.game_profile_fields_frame = ttk.Frame(game_frame)
+        ttk.Label(
+            self.game_profile_fields_frame,
+            text="Game process name(s), comma-separated:",
+        ).pack(anchor="w")
+        self.game_process_names_entry = ttk.Entry(
+            self.game_profile_fields_frame,
+            textvariable=self.game_process_names_var,
+        )
+        self.game_process_names_entry.pack(fill="x", pady=(2, 6))
+        self.game_process_names_entry.bind(
+            "<FocusOut>",
+            lambda _event: self._save_run_game_settings(),
+        )
+        self.game_process_names_entry.bind(
+            "<Return>",
+            lambda _event: self._save_run_game_settings(),
         )
         self.custom_game_frame = ttk.Frame(game_frame)
         ttk.Label(self.custom_game_frame, text="Custom game name:").pack(anchor="w")
@@ -723,23 +752,6 @@ class MainApp:
         )
         ttk.Label(
             self.custom_game_frame,
-            text="Game process name (usually ends in .exe):",
-        ).pack(anchor="w")
-        self.custom_game_process_entry = ttk.Entry(
-            self.custom_game_frame,
-            textvariable=self.custom_game_process_var,
-        )
-        self.custom_game_process_entry.pack(fill="x", pady=(2, 4))
-        self.custom_game_process_entry.bind(
-            "<FocusOut>",
-            lambda _event: self._save_run_game_settings(),
-        )
-        self.custom_game_process_entry.bind(
-            "<Return>",
-            lambda _event: self._save_run_game_settings(),
-        )
-        ttk.Label(
-            self.custom_game_frame,
             text="Find the process name in Task Manager > Details. Custom games use "
             "the same basic on-screen event recognition.",
             wraplength=680,
@@ -747,6 +759,8 @@ class MainApp:
         ).pack(anchor="w")
         if selected_game.casefold() == "custom":
             self.custom_game_frame.pack(fill="x", pady=(8, 0))
+        if selected_game != "auto":
+            self.game_profile_fields_frame.pack(fill="x", pady=(8, 0))
         ttk.Label(
             game_frame,
             text="Choose Auto-detect if you are not sure which game to select.",
@@ -789,10 +803,15 @@ class MainApp:
         return "Start AI Highlights"
 
     def _on_game_selection_changed(self, _event=None):
-        if self._game_choice_to_value.get(self.game_selection_var.get()) == "custom":
+        selected_game = self._game_choice_to_value.get(self.game_selection_var.get(), "auto")
+        if selected_game == "custom":
             self.custom_game_frame.pack(fill="x", pady=(8, 0))
         else:
             self.custom_game_frame.pack_forget()
+        if selected_game != "auto":
+            self.game_profile_fields_frame.pack(fill="x", pady=(8, 0))
+        else:
+            self.game_profile_fields_frame.pack_forget()
         self._save_run_game_settings()
 
     def _save_run_game_settings(self):
@@ -801,15 +820,79 @@ class MainApp:
             "auto",
         )
         config = app_config.load_config()
+        previous_key = self._active_game_profile_key
+        selected_key = app_config.game_profile_key(selected_game)
+        previous_profile_settings = app_config.get_game_profile_settings(
+            config,
+            previous_key,
+        )
+        current_process_names = [
+            name.strip()
+            for name in self.game_process_names_var.get().split(",")
+            if name.strip()
+        ]
+        app_config.save_game_profile_settings(
+            config,
+            previous_key,
+            {
+                "player_name": self.game_player_name_var.get().strip(),
+                "process_names": current_process_names,
+            },
+        )
         config["game_selection"] = selected_game
         config["custom_game_name"] = self.custom_game_name_var.get().strip()
-        config["custom_game_process_name"] = self.custom_game_process_var.get().strip()
+        if selected_key != previous_key:
+            profile_settings = app_config.get_game_profile_settings(config, selected_key)
+            if (
+                previous_key == "auto"
+                and selected_key != "auto"
+                and selected_key not in config.get("game_profiles", {})
+            ):
+                inherited = dict(previous_profile_settings)
+                inherited["process_names"] = (
+                    self._game_profile_defaults.get(selected_game, [])
+                    if selected_game != "custom"
+                    else profile_settings.get("process_names", [])
+                )
+                profile_settings.update(inherited)
+                app_config.save_game_profile_settings(
+                    config,
+                    selected_key,
+                    profile_settings,
+                )
+            names = profile_settings.get("process_names") or self._game_profile_defaults.get(
+                selected_game, []
+            )
+            if selected_game == "custom" and not names:
+                names = [config.get("custom_game_process_name", "")]
+            self.game_process_names_var.set(", ".join(name for name in names if name))
+            self.game_player_name_var.set(str(profile_settings.get("player_name", "")))
+            self.settings_ui.load_game_profile_fields(profile_settings)
+            self._active_game_profile_key = selected_key
+        current_process_names = [
+            name.strip()
+            for name in self.game_process_names_var.get().split(",")
+            if name.strip()
+        ]
+        if selected_game == "custom":
+            config["custom_game_process_name"] = current_process_names[0] if current_process_names else ""
         config["capture_mode"] = self._capture_label_to_mode.get(
             self.capture_mode_var.get(),
             "game_events",
         )
         self._capture_mode = config["capture_mode"]
-        config["game_player_name"] = self.game_player_name_var.get().strip()
+        app_config.save_game_profile_settings(
+            config,
+            selected_key,
+            {
+                "player_name": self.game_player_name_var.get().strip(),
+                "process_names": [
+                    name.strip()
+                    for name in self.game_process_names_var.get().split(",")
+                    if name.strip()
+                ],
+            },
+        )
         app_config.save_config(config)
         self.game_player_name_var.set(config["game_player_name"])
         self.capture_button.configure(
@@ -944,6 +1027,7 @@ class MainApp:
             game = game_detector.detect_running_game(
                 selected_game=selected_game if selected_game != "auto" else None,
                 custom_profile=custom_profile if selected_game == "custom" else None,
+                profile_overrides=config.get("game_profiles", {}),
             )
             text = (
                 game_detector.format_game_detection(game)
@@ -988,11 +1072,11 @@ class MainApp:
         self.sessions_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=8)
         self.sessions_tree.heading("label", text="Session")
         self.sessions_tree.heading("started", text="Started")
-        self.sessions_tree.heading("thoughts", text="Thoughts")
+        self.sessions_tree.heading("thoughts", text="Events / Thoughts")
         self.sessions_tree.heading("saved", text="Saved")
         self.sessions_tree.column("label", width=260)
         self.sessions_tree.column("started", width=140)
-        self.sessions_tree.column("thoughts", width=80, anchor="center")
+        self.sessions_tree.column("thoughts", width=120, anchor="center")
         self.sessions_tree.column("saved", width=80, anchor="center")
         self.sessions_tree.pack(side="left", fill="both", expand=True)
 
@@ -1045,13 +1129,23 @@ class MainApp:
 
         for record in records:
             started = record.get("started_at", "")[:16].replace("T", " ")
+            game_event_counts = record.get("game_event_counts", {})
+            game_events = sum(game_event_counts.values())
+            if record.get("capture_mode") == "game_events":
+                activity_count = game_events
+            elif game_event_counts:
+                activity_count = (
+                    f"{game_events} / {record.get('thoughts_analyzed', 0)}"
+                )
+            else:
+                activity_count = record.get("thoughts_analyzed", 0)
             iid = self.sessions_tree.insert(
                 "",
                 "end",
                 values=(
                     record.get("label", ""),
                     started,
-                    record.get("thoughts_analyzed", 0),
+                    activity_count,
                     record.get("saved_count", 0),
                 ),
             )
@@ -1081,6 +1175,34 @@ class MainApp:
     def _show_session_detail(self, record):
         lines = []
         lines.append(f"Session: {record.get('label', '')}")
+        if record.get("capture_mode") == "game_events":
+            event_counts = record.get("game_event_counts", {})
+            lines.append(f"Game: {record.get('game_name', '(unknown)')}")
+            lines.append(f"Game profile: {record.get('game_profile', '(unknown)')}")
+            lines.append(f"Started: {record.get('started_at', '')}")
+            lines.append(f"Ended: {record.get('ended_at') or '(still running, or ended abnormally)'}")
+            lines.append("")
+            lines.append(f"Events detected: {sum(event_counts.values())}")
+            for event_type, count in sorted(event_counts.items()):
+                lines.append(f"  {event_type.replace('_', ' ').title()}: {count}")
+            lines.append(f"Rounds completed: {record.get('rounds_completed', 0)}")
+            lines.append(f"Game clips saved: {record.get('game_clips_saved', record.get('saved_count', 0))}")
+            lines.append("Notable achievements:")
+            achievements = record.get("notable_achievements", [])
+            if achievements:
+                lines.extend(f"  - {achievement}" for achievement in achievements)
+            else:
+                lines.append("  (none recorded)")
+            clips = record.get("saved_clips", [])
+            lines.append("")
+            lines.append(f"Saved clips ({len(clips)}):")
+            lines.extend(f"  {clip}" for clip in clips)
+            self.session_detail_text.configure(state="normal")
+            self.session_detail_text.delete("1.0", "end")
+            self.session_detail_text.insert("1.0", "\n".join(lines))
+            self.session_detail_text.configure(state="disabled")
+            return
+
         lines.append(f"Preset: {record.get('preset', '')}")
         lines.append(f"Started: {record.get('started_at', '')}")
         lines.append(f"Ended: {record.get('ended_at') or '(still running, or ended abnormally)'}")
@@ -1114,6 +1236,21 @@ class MainApp:
         lines.append(f"Saved clips ({len(clips)}):")
         for clip in clips:
             lines.append(f"  {clip}")
+        if record.get("game_name"):
+            event_counts = record.get("game_event_counts", {})
+            lines.append("")
+            lines.append(f"Game: {record['game_name']} ({record.get('game_profile', 'Unknown')})")
+            lines.append(f"Game events detected: {sum(event_counts.values())}")
+            for event_type, count in sorted(event_counts.items()):
+                lines.append(f"  {event_type.replace('_', ' ').title()}: {count}")
+            lines.append(f"Rounds completed: {record.get('rounds_completed', 0)}")
+            lines.append(f"Game clips saved: {record.get('game_clips_saved', 0)}")
+            achievements = record.get("notable_achievements", [])
+            lines.append("Notable achievements:")
+            if achievements:
+                lines.extend(f"  - {achievement}" for achievement in achievements)
+            else:
+                lines.append("  (none recorded)")
 
         self.session_detail_text.configure(state="normal")
         self.session_detail_text.delete("1.0", "end")
@@ -1189,6 +1326,32 @@ class MainApp:
         )
         self.clip_status_filter_combo.pack(side="left", padx=(8, 0))
         self.clip_status_filter_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._refresh_clips_list()
+        )
+        ttk.Label(filter_row, text="Game:").pack(side="left", padx=(14, 0))
+        self.clip_game_filter_var = tk.StringVar(value="All")
+        self.clip_game_filter_combo = ttk.Combobox(
+            filter_row,
+            textvariable=self.clip_game_filter_var,
+            values=["All"],
+            state="readonly",
+            width=20,
+        )
+        self.clip_game_filter_combo.pack(side="left", padx=(6, 0))
+        self.clip_game_filter_combo.bind(
+            "<<ComboboxSelected>>", lambda _e: self._refresh_clips_list()
+        )
+        ttk.Label(filter_row, text="Event:").pack(side="left", padx=(14, 0))
+        self.clip_event_filter_var = tk.StringVar(value="All")
+        self.clip_event_filter_combo = ttk.Combobox(
+            filter_row,
+            textvariable=self.clip_event_filter_var,
+            values=["All"],
+            state="readonly",
+            width=16,
+        )
+        self.clip_event_filter_combo.pack(side="left", padx=(6, 0))
+        self.clip_event_filter_combo.bind(
             "<<ComboboxSelected>>", lambda _e: self._refresh_clips_list()
         )
 
@@ -1353,6 +1516,29 @@ class MainApp:
 
         all_clips = clip_manager.list_clips()
         self._all_clips_count = len(all_clips)
+        games = sorted({
+            context["game"]
+            for clip in all_clips
+            if isinstance((context := clip.get("game_context")), dict)
+            and context.get("game")
+        })
+        tags = sorted({
+            tag
+            for clip in all_clips
+            for tag in (
+                clip["game_context"].get("tags", [])
+                if isinstance(clip.get("game_context"), dict)
+                and isinstance(clip["game_context"].get("tags"), list)
+                else []
+            )
+            if isinstance(tag, str) and tag
+        })
+        self.clip_game_filter_combo.configure(values=["All"] + games)
+        self.clip_event_filter_combo.configure(values=["All"] + tags)
+        if self.clip_game_filter_var.get() not in ["All"] + games:
+            self.clip_game_filter_var.set("All")
+        if self.clip_event_filter_var.get() not in ["All"] + tags:
+            self.clip_event_filter_var.set("All")
         self.review_clips_button.configure(
             state="normal" if all_clips else "disabled"
         )
@@ -1361,11 +1547,16 @@ class MainApp:
         status_filter = self.clip_status_filter_var.get()
         if status_filter != "All":
             clips = [clip for clip in clips if clip["status"] == status_filter]
+        clips = clip_manager.filter_game_clips(
+            clips,
+            self.clip_game_filter_var.get(),
+            self.clip_event_filter_var.get(),
+        )
 
         if not clips:
             if all_clips:
                 self.clips_empty_label.configure(
-                    text="No clips match this status. Change the filter to All to see your clips."
+                    text="No clips match these filters. Change Game, Event, or Status to All."
                 )
                 self.clips_empty_button.configure(
                     text="Show all clips",
@@ -1421,6 +1612,8 @@ class MainApp:
 
     def _show_all_clips(self):
         self.clip_status_filter_var.set("All")
+        self.clip_game_filter_var.set("All")
+        self.clip_event_filter_var.set("All")
         self._refresh_clips_list()
 
     def _open_clips_tab(self):
