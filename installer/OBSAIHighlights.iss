@@ -1,5 +1,5 @@
 #define MyAppName "OBS AI Highlights"
-#define MyAppVersion "1.1.2"
+#define MyAppVersion "1.1.3"
 #define MyAppPublisher "OBS AI Highlights"
 #define MyAppExeName "OBSAIHighlights.exe"
 #ifdef AppOnlyUpdate
@@ -43,8 +43,8 @@ Source: "..\dist\OBSAIHighlights\_internal\assets\*"; DestDir: "{app}\_internal\
 Source: "..\dist\OBSAIHighlights\_internal\profiles\*"; DestDir: "{app}\_internal\profiles"; Flags: ignoreversion recursesubdirs createallsubdirs
 #else
 Source: "..\dist\OBSAIHighlights\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-#endif
 Source: "..\vendor\tesseract\tesseract-ocr-w64-setup-5.4.0.20240606.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+#endif
 
 [Icons]
 Name: "{group}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"
@@ -57,9 +57,12 @@ Name: "{autodesktop}\OBS AI Highlights"; Filename: "{app}\{#MyAppExeName}"; Work
 ; this entry to relaunch it afterward, same as an interactive install's
 ; "Launch..." checkbox already does.
 ; Keep Tesseract outside {app}: upgrades uninstall the previous app version.
+#ifndef AppOnlyUpdate
 Filename: "{tmp}\tesseract-ocr-w64-setup-5.4.0.20240606.exe"; Parameters: "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=""{localappdata}\OBS AI Highlights\tesseract"""; StatusMsg: "Installing Tesseract OCR (first install only)..."; Flags: runhidden waituntilterminated; Check: ShouldInstallBundledTesseract
+#endif
 Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{%USERPROFILE}"; Description: "Launch OBS AI Highlights"; Flags: nowait postinstall
 
+#ifndef AppOnlyUpdate
 [Code]
 function HasTesseractInstallation(BaseDir: String): Boolean;
 begin
@@ -82,3 +85,4 @@ begin
     )
   );
 end;
+#endif

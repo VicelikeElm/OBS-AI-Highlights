@@ -299,7 +299,7 @@ def _build_installer_if_available(app_only_update=False):
             )
 
         print()
-        print("App-only update built (installs Tesseract OCR if it is not present):")
+        print("App-only update built (does not include the Tesseract installer):")
         print(" -", update_installer)
 
     return installer
@@ -311,8 +311,8 @@ def main():
         "--app-only-update",
         action="store_true",
         help=(
-            "Also build a smaller update package that replaces app files and installs "
-            "Tesseract OCR if it is not already present."
+            "Also build a smaller update package that replaces app files without "
+            "bundling or installing Tesseract OCR."
         ),
     )
     args = parser.parse_args()

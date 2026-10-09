@@ -8,6 +8,11 @@
 
 Built by [Vice Media Solutions](assets/vivce_media_solutions.png).
 
+## What's new in v1.1.3
+
+- Make app-only updates smaller by excluding the Tesseract installer.
+  Use the full installer for a new installation or to add/repair Tesseract.
+
 ## What's new in v1.1.2
 
 - Prevent the updater from reinstalling Tesseract when a valid installation
@@ -181,7 +186,9 @@ Highlights** from the Start Menu. One window, five tabs:
   download and install a newer version without leaving the app. When a
   release includes an app-only update package, the updater downloads that
   instead of the full installer; otherwise it falls back to the full
-  installer.
+  installer. App-only updates do not include or install Tesseract; use the
+  full installer for a new installation or if Tesseract needs to be added
+  or repaired.
 
 ffmpeg is bundled with the installer (an LGPL-only static build - see
 [Third-party licenses](#third-party-licenses) below), so there's nothing to
@@ -297,10 +304,10 @@ This produces both the normal full installer and
 `installer-output/OBSAIHighlights-Update-vX.Y.Z.exe`. Attach both to the
 GitHub Release to let existing installs take the smaller update while
 new installs use the full installer. The update package replaces the
-executable and app assets and installs the bundled Tesseract OCR runtime
-when it is not already present; it retains FFmpeg and the other bundled
-libraries. Changes to PyInstaller-bundled Python/native libraries still
-require the full installer.
+executable and app assets without bundling or installing Tesseract; use the
+full installer if Tesseract must be installed or repaired. It retains FFmpeg
+and the other bundled app libraries. Changes to PyInstaller-bundled
+Python/native libraries still require the full installer.
 
 The build downloads and caches a static ffmpeg build (~160MB, see below)
 under `vendor/ffmpeg/` and the pinned Tesseract Windows installer under
