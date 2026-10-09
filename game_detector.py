@@ -55,9 +55,15 @@ def load_game_profiles(profile_dir=None):
     return profiles
 
 
-def detect_running_game(process_iter=None, profile_dir=None):
+def detect_running_game(process_iter=None, profile_dir=None, selected_game=None):
     """Return the matching game/profile and process name, or None if unsupported."""
     profiles = load_game_profiles(profile_dir)
+    if selected_game and selected_game.casefold() != "auto":
+        profiles = [
+            profile
+            for profile in profiles
+            if profile["game_name"].casefold() == selected_game.casefold()
+        ]
     processes = process_iter if process_iter is not None else psutil.process_iter(["name"])
 
     process_names = {}

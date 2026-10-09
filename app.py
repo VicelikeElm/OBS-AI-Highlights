@@ -397,10 +397,10 @@ class MainApp:
         notebook.add(settings_tab, text="Settings")
         notebook.add(updates_tab, text="Updates")
 
+        self.settings_ui = SettingsUI(settings_tab, on_theme_change=self._apply_theme_to_text_widgets)
         self._build_run_tab(run_tab)
         self._build_clips_tab(clips_tab)
         self._build_sessions_tab(sessions_tab)
-        self.settings_ui = SettingsUI(settings_tab, on_theme_change=self._apply_theme_to_text_widgets)
         self._build_updates_tab(updates_tab)
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -439,6 +439,8 @@ class MainApp:
             ),
             justify="left",
         ).pack(anchor="w")
+
+        self._build_run_game_options(parent)
 
         action_row = ttk.Frame(parent)
         action_row.pack(fill="x", pady=(0, 8))
@@ -554,9 +556,6 @@ class MainApp:
             command=self._save_pipeline_settings,
         ).pack(anchor="w")
 
-        self.game_status_label = ttk.Label(parent, text="Game events: checking for a supported game...")
-        self.game_status_label.pack(anchor="w", pady=(0, 6))
-
         ttk.Label(parent, text="Recent activity").pack(anchor="w", pady=(4, 2))
         self.activity_text = tk.Text(
             parent,
@@ -591,6 +590,85 @@ class MainApp:
         scrollbar.pack(side="right", fill="y")
         self.activity_log_frame = log_frame
         self._activity_log_visible = False
+
+    def _build_run_game_options(self, parent):
+        settings = app_config.load_config()
+        selected_game = str(settings.get("game_selection", "auto"))
+        self._game_choice_to_value = {"Auto-detect": "auto"}
+        self._game_value_to_choice = {"auto": "Auto-detect"}
+        for profile in game_detector.load_game_profiles():
+            game_name = profile["game_name"]
+            self._game_choice_to_value[game_name] = game_name
+            self._game_value_to_choice[game_name] = game_name
+
+        game_choice = self._game_value_to_choice.get(selected_game, "Auto-detect")
+        self.game_selection_var = tk.StringVar(value=game_choice)
+        self.game_player_name_var = self.settings_ui.game_player_name_var
+
+        game_frame = ttk.LabelFrame(parent, text="Game highlights (optional)", padding=8)
+        game_frame.pack(fill="x", pady=(0, 8))
+
+        game_row = ttk.Frame(game_frame)
+        game_row.pack(fill="x")
+        ttk.Label(game_row, text="Game:").pack(side="left")
+        self.game_selection_combo = ttk.Combobox(
+            game_row,
+            textvariable=self.game_selection_var,
+            values=tuple(self._game_choice_to_value),
+            state="readonly",
+            width=28,
+        )
+        self.game_selection_combo.pack(side="left", padx=(8, 0))
+        self.game_selection_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event: self._save_run_game_settings(),
+        )
+        ttk.Label(
+            game_frame,
+            text="Choose Auto-detect if you are not sure which game to select.",
+            wraplength=680,
+            foreground="#888888",
+        ).pack(anchor="w", pady=(4, 0))
+
+        ttk.Label(game_frame, text="Your in-game name (optional):").pack(anchor="w", pady=(8, 2))
+        self.game_player_name_entry = ttk.Entry(
+            game_frame,
+            textvariable=self.game_player_name_var,
+        )
+        self.game_player_name_entry.pack(fill="x")
+        self.game_player_name_entry.bind("<Return>", lambda _event: self._save_run_game_settings())
+        self.game_player_name_entry.bind("<FocusOut>", lambda _event: self._save_run_game_settings())
+        ttk.Label(
+            game_frame,
+            text="Used to recognize your kills and deaths from the game's on-screen feed. "
+            "Enter the name exactly as it appears in-game. Changes apply to your next capture.",
+            wraplength=680,
+            foreground="#888888",
+        ).pack(anchor="w", pady=(4, 0))
+        ttk.Button(
+            game_frame,
+            text="Save game settings",
+            command=self._save_run_game_settings,
+        ).pack(anchor="e", pady=(6, 0))
+
+        self.game_status_label = ttk.Label(
+            game_frame,
+            text="Game events: checking for a supported game...",
+            wraplength=680,
+        )
+        self.game_status_label.pack(anchor="w", pady=(6, 0))
+
+    def _save_run_game_settings(self):
+        selected_game = self._game_choice_to_value.get(
+            self.game_selection_var.get(),
+            "auto",
+        )
+        config = app_config.load_config()
+        config["game_selection"] = selected_game
+        config["game_player_name"] = self.game_player_name_var.get().strip()
+        app_config.save_config(config)
+        self.game_player_name_var.set(config["game_player_name"])
+        self._refresh_game_detection()
 
     def _show_first_run_guide(self):
         guide = tk.Toplevel(self.root)
@@ -704,14 +782,25 @@ class MainApp:
         app_config.save_config(config)
 
     def _poll_game_detection(self):
+        self._refresh_game_detection()
+        self.root.after(5000, self._poll_game_detection)
+
+    def _refresh_game_detection(self):
         try:
-            game = game_detector.detect_running_game()
-            text = game_detector.format_game_detection(game)
+            config = app_config.load_config()
+            selected_game = config.get("game_selection", "auto")
+            game = game_detector.detect_running_game(
+                selected_game=selected_game if selected_game != "auto" else None,
+            )
+            text = (
+                game_detector.format_game_detection(game)
+                if game is not None or selected_game == "auto"
+                else f"{selected_game} is not running yet."
+            )
         except Exception as error:
             text = f"Game detection unavailable: {error}"
 
         self.game_status_label.configure(text=text)
-        self.root.after(5000, self._poll_game_detection)
 
     def _build_sessions_tab(self, parent):
         ttk.Label(

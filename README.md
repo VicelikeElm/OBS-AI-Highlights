@@ -89,8 +89,11 @@ Highlights** from the Start Menu. One window, five tabs:
   **Review clips** shortcut appears when clips are available. Empty Clips
   and Sessions views explain what to do next. The Run tab also reports a
   detected supported game
-  and its profile; Rainbow Six Siege detection is included as the first
-  game profile. During capture, the optional game-event engine OCRs a
+  and its profile; the Run tab also lets you choose Auto-detect or a
+  supported game and enter your in-game name for kill/death matching.
+  These choices are saved and take effect on the next capture.
+  Rainbow Six Siege detection is included as the first game profile.
+  During capture, the optional game-event engine OCRs a
   configurable primary-display region, scores recognized events and
   achievements alongside transcript/audio scores, and stores that context
   with saved clips.

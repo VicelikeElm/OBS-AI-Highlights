@@ -670,18 +670,26 @@ class SettingsUI:
         ttk.Label(
             parent,
             text=(
-                "Supported games are detected from their process. OCR reads a normalized "
-                "rectangle of the primary display once per interval. Set the rectangle to "
-                "include the game's event/HUD text. Game clips continue through the existing "
-                "Review workflow."
+                "Game events can add extra context to clips. Choose a game and enter your "
+                "in-game name on the Run tab. These advanced options control which part of "
+                "your screen is checked and how often it is checked."
             ),
             wraplength=680,
             foreground="#888888",
         ).pack(fill="x", pady=(0, 8))
-        self._add_labeled_entry(parent, "Player name (for kill/death attribution)", self.game_player_name_var)
-        self._add_labeled_entry(parent, "Tesseract executable (blank uses PATH)", self.game_tesseract_cmd_var)
-        ttk.Label(parent, text="OCR region, normalized to primary display (0.0-1.0)").pack(
-            fill="x", pady=(8, 0)
+        self._add_labeled_entry(
+            parent,
+            "Your in-game name (also available on the Run tab)",
+            self.game_player_name_var,
+        )
+        self._add_labeled_entry(
+            parent,
+            "Tesseract program location (optional; usually leave blank)",
+            self.game_tesseract_cmd_var,
+        )
+        ttk.Label(parent, text="Screen area to check (advanced)").pack(
+            fill="x",
+            pady=(8, 0),
         )
         self._add_labeled_spinbox(parent, "Left", self.game_ocr_left_var, 0.0, 1.0, 0.01, fmt="%.2f")
         self._add_labeled_spinbox(parent, "Top", self.game_ocr_top_var, 0.0, 1.0, 0.01, fmt="%.2f")
@@ -691,8 +699,8 @@ class SettingsUI:
         ttk.Label(
             parent,
             text=(
-                "Tesseract OCR must be installed separately. If OCR cannot start, the capture "
-                "process logs the error and continues transcript/audio capture."
+                "Game-event reading needs Tesseract OCR installed separately. If it is not "
+                "available, audio and transcript capture still work normally."
             ),
             wraplength=680,
             foreground="#888888",

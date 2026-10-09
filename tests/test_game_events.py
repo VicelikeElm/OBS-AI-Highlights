@@ -64,6 +64,23 @@ class GameEventTests(unittest.TestCase):
             game_detector.detect_running_game([FakeProcess("unrelated.exe")])
         )
 
+    def test_game_selection_filters_process_detection(self):
+        process = [FakeProcess("RainbowSix.exe")]
+
+        self.assertEqual(
+            game_detector.detect_running_game(
+                process,
+                selected_game="Rainbow Six Siege",
+            )["game_name"],
+            "Rainbow Six Siege",
+        )
+        self.assertIsNone(
+            game_detector.detect_running_game(
+                process,
+                selected_game="Another Game",
+            )
+        )
+
     def test_game_context_survives_candidate_sidecar_load(self):
         context = {
             "game": "Rainbow Six Siege",

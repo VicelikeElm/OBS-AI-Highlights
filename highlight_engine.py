@@ -1844,7 +1844,10 @@ def run_live_sermon(
         if not CONFIG.get("game_events_enabled", True) or game_tracker is not None:
             return
 
-        detected = game_detector.detect_running_game()
+        selected_game = CONFIG.get("game_selection", "auto")
+        detected = game_detector.detect_running_game(
+            selected_game=selected_game if selected_game != "auto" else None,
+        )
         if detected is None:
             return
 
