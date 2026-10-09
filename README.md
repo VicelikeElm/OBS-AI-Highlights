@@ -8,6 +8,11 @@
 
 Built by [Vice Media Solutions](assets/vivce_media_solutions.png).
 
+## What's new in v1.1.2
+
+- Prevent the updater from reinstalling Tesseract when a valid installation
+  already exists in the standard Program Files location.
+
 ## What's new in v1.1.1
 
 - Keep **Save Settings** visible in a fixed footer while scrolling through
