@@ -91,8 +91,10 @@ Highlights** from the Start Menu. One window, five tabs:
   hidden until requested. Use **Check setup** to expand a checklist for the
   OBS connection, the needed audio/OCR setup for the selected mode, and
   recording/output folders before capture.
-  The check is advisory and doesn't prevent capture from waiting for OBS
-  to become active. New installations get a short setup guide, and a
+  The check is advisory for OBS readiness, which doesn't prevent capture
+  from waiting for OBS to become active. Game Highlights will not start
+  until Tesseract is available, and explains how to install or configure it.
+  New installations get a short setup guide, and a
   **Review clips** shortcut appears when clips are available. Empty Clips
   and Sessions views explain what to do next. The Run tab also reports a
   detected supported game and its profile. The game dropdown includes

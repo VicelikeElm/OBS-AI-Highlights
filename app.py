@@ -242,6 +242,22 @@ def _check_tesseract_preflight(config):
     )
 
 
+def _capture_prerequisite_error(role, config):
+    if role != "capture" or config.get("capture_mode", "game_events") != "game_events":
+        return None
+    if not config.get("game_events_enabled", True):
+        return "Game-event capture is disabled. Enable it in Settings > Advanced > Game Events."
+
+    level, message = _check_tesseract_preflight(config)
+    if level != "ready":
+        return (
+            "Game Highlights needs Tesseract OCR, but it isn't available. Install "
+            "Tesseract for Windows or set its executable path in Settings > Advanced > "
+            "Game Events. AI Highlights can still run without Tesseract."
+        )
+    return None
+
+
 def _check_obs_preflight(config=None):
     config = config or app_config.load_config()
     game_capture_mode = config.get("capture_mode", "game_events") == "game_events"
@@ -1976,6 +1992,20 @@ class MainApp:
 
     def _start_worker(self, role):
         if self.active_process is not None:
+            return
+
+        prerequisite_error = _capture_prerequisite_error(
+            role,
+            app_config.load_config(),
+        )
+        if prerequisite_error:
+            self._append_log(f"--- Failed to start {WORKER_LABELS[role]}: {prerequisite_error} ---\n")
+            self._append_activity("Game Highlights needs Tesseract OCR before it can start.")
+            self.status_label.configure(text="Game Highlights was not started.")
+            self.next_step_label.configure(
+                text="Install Tesseract or choose AI Highlights to capture without OCR."
+            )
+            messagebox.showwarning("Tesseract required", prerequisite_error)
             return
 
         self._append_log(f"--- Starting {WORKER_LABELS[role]} ---\n")

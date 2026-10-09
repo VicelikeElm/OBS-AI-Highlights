@@ -7,6 +7,7 @@ from unittest.mock import patch
 from app import (
     MainApp,
     _audio_device_for_preflight,
+    _capture_prerequisite_error,
     _check_folder_preflight,
     _check_obs_preflight,
     _friendly_activity_message,
@@ -64,6 +65,35 @@ class CaptureModeTests(unittest.TestCase):
         del _load_config
         run_worker("capture")
         game_capture_main.assert_called_once_with()
+
+
+class CapturePrerequisiteTests(unittest.TestCase):
+    @patch("app.shutil.which", return_value=None)
+    def test_game_capture_requires_tesseract(self, _which):
+        error = _capture_prerequisite_error(
+            "capture",
+            {"capture_mode": "game_events", "game_events_enabled": True},
+        )
+
+        self.assertIn("needs Tesseract OCR", error)
+        self.assertIn("AI Highlights can still run", error)
+
+    @patch("app.shutil.which", return_value=None)
+    def test_ai_capture_does_not_require_tesseract(self, _which):
+        self.assertIsNone(
+            _capture_prerequisite_error(
+                "capture",
+                {"capture_mode": "ai", "game_events_enabled": True},
+            )
+        )
+
+    def test_disabled_game_capture_reports_settings_path(self):
+        error = _capture_prerequisite_error(
+            "capture",
+            {"capture_mode": "game_events", "game_events_enabled": False},
+        )
+
+        self.assertIn("Settings > Advanced > Game Events", error)
 
 
 class ObsPreflightSummaryTests(unittest.TestCase):

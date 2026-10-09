@@ -1,5 +1,5 @@
 #define MyAppName "OBS AI Highlights"
-#define MyAppVersion "1.0.8.1"
+#define MyAppVersion "1.0.8.2"
 #define MyAppPublisher "OBS AI Highlights"
 #define MyAppExeName "OBSAIHighlights.exe"
 #ifdef AppOnlyUpdate
